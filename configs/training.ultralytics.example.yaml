@@ -1,0 +1,17 @@
+backend: ultralytics
+task: detect
+data_config_path: data/processed/classroom_behavior_v1/yolo_dataset.yaml
+model_weights: yolo11n.pt
+image_size: 960
+epochs: 80
+batch_size: 16
+device: 0
+project_dir: experiments
+run_name: baseline_yolo11n_v0_1_e80
+seed: 42
+patience: 30
+workers: 4
+extra_args:
+  pretrained: true
+  cache: false
+  plots: true

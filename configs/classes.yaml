@@ -1,0 +1,8 @@
+classes:
+  - phone_use
+  - talking
+  - sleeping
+display_names:
+  phone_use: 玩手机
+  talking: 交谈
+  sleeping: 打瞌睡

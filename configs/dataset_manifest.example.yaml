@@ -1,0 +1,11 @@
+dataset_name: classroom_behavior_v1
+dataset_version: v0.1
+class_config: configs/classes.yaml
+raw_videos_dir: data/raw_videos
+processed_dir: data/processed/classroom_behavior_v1
+train_ratio: 0.7
+val_ratio: 0.2
+seed: 42
+notes: |
+  First-pass baseline dataset manifest.
+  Keep video-level split fixed after the first annotation batch starts.
