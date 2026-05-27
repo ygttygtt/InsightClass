@@ -1,100 +1,174 @@
-# InsightClass 项目启动指南
+# InsightClass 快速上手指南
 
-本指南将带你完成从零开始的完整流程：数据准备 → 标注 → 上传 Kaggle 训练 → 本地推理测试。
+本指南面向首期 baseline 落地，目标是尽快打通一条可复用闭环：
 
----
+1. 本地整理原始视频
+2. 抽帧并标注三类目标行为
+3. 导出 YOLO 数据集
+4. 在 Kaggle 或 Colab 训练首个基线模型
+5. 把权重下载回本机做离线视频推理和结果回放
 
-## 第一部分：本地环境准备
+这份文档特别回答三个核心问题：
 
-### 1.1 安装项目依赖
+- 学生行为能不能先用 YOLO 这种框标注方案做
+- 正常听课的学生要不要标
+- 首期标注到底怎么打才更稳
+
+## 1. 先回答你的关键疑问
+
+### 1.1 学生行为检测能先用 YOLO 做吗
+
+可以，但要明确它是首期 baseline，不是最终答案。
+
+YOLO 本质上是目标检测模型，最擅长学“哪里有一个具有可见视觉模式的目标”。它不只适合杯子、手机、人脸这类物体，也可以学习“带有相对稳定外观特征的行为状态”，前提是这个行为在单帧里能被看出来。
+
+对你这个项目来说：
+
+- `phone_use` 最适合先做单帧检测，因为通常能看到手机、手部和低头注视关系。
+- `sleeping` 可以先做单帧检测 baseline，因为趴桌、闭眼、头部下垂通常有稳定姿态特征。
+- `talking` 能做，但会比前两类更难，因为它更接近时序行为，单帧里容易和“转头”“张嘴”“看同学”混淆。
+
+所以首期建议不是“YOLO 一定能完美解决行为识别”，而是：
+
+- 先把它当成最低成本、最快能形成比较基线的方案
+- 用统一的框标注把数据和实验体系搭起来
+- 跑完第一轮后再判断哪些类别需要升级成二阶段或时序方案
+
+### 1.2 首期应该怎么框
+
+不是框手机本身，也不是只框脸。
+
+首期统一采用“行为主体框”：
+
+- 以学生上半身为主
+- 尽量把头、肩、手，以及与行为强相关的局部一起包进去
+- 如果是 `phone_use`，尽量把手机也包含进框里
+
+也就是说，标注的对象是“正在表现某种行为的学生”，不是单独的物品。
+
+### 1.3 就按三个名字直接标吗
+
+首期是的。
+
+建议直接按这三个训练类 ID 标注：
+
+- `phone_use`
+- `talking`
+- `sleeping`
+
+中文业务含义分别对应：
+
+- 玩手机
+- 交谈
+- 打瞌睡
+
+这和当前项目配置 [classes.yaml](/E:/QianFengStudy/PythonProject/InsightClass/configs/classes.yaml) 一致，后续训练、推理、实验记录也都按这套类名走。
+
+### 1.4 正常听课的学生要不要标
+
+首期默认不标成一个检测类别。
+
+原因很简单：
+
+- 你当前项目更像“异常行为检测 baseline”，不是“所有状态闭集分类”。
+- `认真听课` 的视觉边界很模糊，很容易和“发呆、低头记笔记、看书、看老师、短暂转头”混在一起。
+- 如果把 `认真听课` 当成一个检测类，首批数据很容易把标签体系搞乱，反而拖慢三类异常行为的可学性。
+
+首期推荐规则：
+
+- 图里只有正常学生，没有目标异常行为：这张图保留为负样本，不给行为框。
+- 图里既有正常学生，也有异常行为学生：只框异常行为学生。
+- 不需要给每个正常学生都打一个 `attentive` 或 `normal` 框。
+
+### 1.5 那正常学生完全没用吗
+
+不是。
+
+正常学生在首期里是“背景和负样本”的重要组成部分：
+
+- 它们帮助模型学会“不是所有学生都属于异常行为”
+- 它们帮助降低误检
+- 它们是必须保留在训练图像里的
+
+只是它们暂时不需要作为一个显式检测类去打框。
+
+### 1.6 什么时候才需要加 `认真听课`
+
+只有当你的目标变成下面这类需求时，才建议认真考虑：
+
+- 统计全班多少人在认真听课
+- 做“认真 / 不认真”的闭集状态识别
+- 每个人都必须被分到某个状态
+
+如果后续真的要做这件事，更合理的方向通常不是“直接加一个 `attentive` 检测类”，而是：
+
+1. 先做人检测或人跟踪
+2. 再对每个人做状态分类
+
+也就是“检测人”与“判断行为/状态”分成两步。
+
+## 2. 本地环境准备
+
+当前建议使用 `conda` 环境 `QF_DL`。
+
+### 2.1 安装项目依赖
 
 ```powershell
-# 进入项目目录
-cd e:\QianFengStudy\PythonProject\InsightClass
+cd E:\QianFengStudy\PythonProject\InsightClass
 
-# 安装项目本身（基础依赖）
 pip install -e .
-
-# 安装 YOLO 后端
 pip install -e .[ultralytics]
-
-# 安装可视化支持（可选，用于结果渲染）
-pip install supervision
-
-# 安装开发依赖（用于测试）
 pip install -e .[dev]
+pip install supervision
 ```
 
-### 1.2 验证安装
+说明：
+
+- `ultralytics` 用于训练与推理后端
+- `supervision` 用于统一可视化和后处理
+- 如果暂时不做可视化，`supervision` 可以后装
+
+### 2.2 验证环境
 
 ```powershell
-# 测试 CLI 是否可用
+$env:PYTHONPATH="src"
 python -m insightclass --help
-
-# 运行单元测试
-python -m pytest tests/
-
-# 测试环境（检查 PyTorch、CUDA 等）
+python -m unittest discover -s tests -v
 python test_environment.py
 ```
 
----
+## 3. 原始视频准备
 
-## 第二部分：视频数据准备
+把原始视频放到：
 
-### 2.1 视频存放位置
-
-将你的原始视频放到以下目录：
-
-```
-InsightClass/
-└─ data/
-   └─ raw_videos/          ← 把视频放这里
-      ├─ video_001.mp4
-      ├─ video_002.mp4
-      └─ ...
+```text
+data/raw_videos/
 ```
 
-**创建目录：**
-```powershell
-mkdir -p data/raw_videos
-```
+支持格式：
 
-### 2.2 支持的视频格式
-
-项目支持以下格式（无需转换）：
-- `.mp4` （推荐）
+- `.mp4`
 - `.avi`
 - `.mov`
 - `.mkv`
 - `.wmv`
 - `.flv`
 
-**建议：**
-- 如果视频格式不在上述列表，使用 FFmpeg 转换：
-  ```powershell
-  ffmpeg -i input.xxx -c:v libx264 output.mp4
-  ```
-- 视频分辨率不需要统一，抽帧时会保持原始分辨率
-- 建议每个视频时长 1-10 分钟，太长可以切分
+如需创建目录：
 
-### 2.3 视频命名建议
-
-```
-data/raw_videos/
-├─ class_a_001.mp4    # 可以按类别/场景命名
-├─ class_a_002.mp4
-├─ class_b_001.mp4
-└─ random_name.mp4    # 任意命名也可以
+```powershell
+New-Item -ItemType Directory -Force data\raw_videos | Out-Null
 ```
 
----
+建议：
 
-## 第三部分：数据预处理（本地执行）
+- 先用 5 到 10 个视频跑通流程
+- 一个视频尽量只对应一个连续场景
+- 如果一个课时被拆成多个片段，后续切分时要避免泄漏到不同 split
 
-### 3.1 生成数据集清单
+## 4. 生成 manifest 和视频级切分
 
-这一步会自动扫描 `data/raw_videos/` 目录，生成 train/val/test 切分。
+先按视频切分 train / val / test，再抽帧。
 
 ```powershell
 python -m insightclass create-manifest `
@@ -102,15 +176,15 @@ python -m insightclass create-manifest `
   --output data/processed/classroom_behavior_v1/manifest.yaml
 ```
 
-**执行后会生成：**
-```
-data/processed/classroom_behavior_v1/
-└─ manifest.yaml    # 数据集清单，记录视频列表和切分信息
+生成后会得到：
+
+```text
+data/processed/classroom_behavior_v1/manifest.yaml
 ```
 
-### 3.2 视频抽帧
+这一步很重要，因为它固定了视频级 split，避免同一视频不同帧同时落到训练集和验证集。
 
-从视频中按固定频率提取图片帧：
+## 5. 抽帧
 
 ```powershell
 python -m insightclass extract-frames `
@@ -119,110 +193,158 @@ python -m insightclass extract-frames `
   --max-frames-per-video 300
 ```
 
-**参数说明：**
-- `--fps 1.0`：每秒提取 1 帧（可根据需要调整，0.5-2.0 都可以）
-- `--max-frames-per-video 300`：每个视频最多提取 300 帧（防止太长的视频产生太多图片）
+建议起步参数：
 
-**执行后会生成：**
-```
+- `fps=1.0`
+- `max_frames_per_video=200~300`
+
+执行后会生成：
+
+```text
 data/processed/classroom_behavior_v1/
-├─ manifest.yaml
-├─ frame_index.csv          # 帧索引记录
+├─ frame_index.csv
 └─ images/
    ├─ train/
-   │  ├─ video_001_f000000.jpg
-   │  ├─ video_001_f000030.jpg
-   │  └─ ...
    ├─ val/
-   │  └─ ...
    └─ test/
-      └─ ...
 ```
 
----
+## 6. 标注策略
 
-## 第四部分：数据标注
+### 6.1 首期标什么
 
-### 4.1 推荐工具：Roboflow
+只标三类目标行为学生：
 
-**为什么推荐 Roboflow：**
-- 在线平台，无需部署
-- 有免费额度（每月 1000 张图片）
-- 支持导出 YOLO 格式
-- 界面友好，适合新手
-- 网址：https://roboflow.com
+- `phone_use`
+- `talking`
+- `sleeping`
 
-### 4.2 标注流程
+### 6.2 首期不标什么
 
-#### 步骤 1：注册 Roboflow 账号
-访问 https://roboflow.com 注册免费账号
+首期不单独标：
 
-#### 步骤 2：创建项目
-1. 点击 "Create New Project"
-2. 项目类型选择 "Object Detection"
-3. 命名为 `InsightClass-Behavior`
-4. 添加类别：
-   - `phone_use`（玩手机）
-   - `talking`（交谈）
-   - `sleeping`（打瞌睡）
+- `normal`
+- `attentive`
+- `person`
+- `student`
 
-#### 步骤 3：上传图片
-1. 将 `data/processed/classroom_behavior_v1/images/train/` 目录下的图片上传
-2. 建议先上传 50-100 张进行试标
+也不建议一开始同时做：
 
-#### 步骤 4：开始标注
-按照 [annotation_spec.md](annotation_spec.md) 的规范进行标注：
-- 框选学生上半身
-- 选择对应的类别
-- 同一学生同一帧只标一个主行为
+- 一套 `person` 框
+- 一套行为框
 
-#### 步骤 5：导出标注
-1. 标注完成后，点击 "Export"
-2. 格式选择 "YOLO"
-3. 下载压缩包
+那会明显增加标注成本和歧义，首轮 baseline 不划算。
 
-### 4.3 标注规范摘要
+### 6.3 单张图如何判断
 
-| 类别 | 说明 | 正例 | 反例 |
-|------|------|------|------|
-| `phone_use` | 玩手机 | 手机可见且学生正在操作 | 手机在桌上/口袋里 |
-| `talking` | 交谈 | 明显侧头交流、嘴部动作 | 单纯转头/打哈欠 |
-| `sleeping` | 打瞌睡 | 趴桌、闭眼、头部下垂 | 低头写字 |
+- 图中只有正常学生：保留图片，不画行为框。
+- 图中一个学生玩手机：框这个学生，类别 `phone_use`。
+- 图中一个学生趴桌睡觉：框这个学生，类别 `sleeping`。
+- 图中两个学生明显交谈：各自框选，类别都为 `talking`。
+- 图中一个学生既低头看手机又与旁边人说话：首期只保留主行为，默认优先 `phone_use`。
 
-**标注原则：宁缺勿滥，不确定不标**
+### 6.4 标注框到底框哪里
 
-### 4.4 标注后目录结构
+统一采用“行为主体框”：
 
-将导出的标注文件放到对应位置：
+- 以上半身为核心
+- 尽量包含头、肩、手
+- `phone_use` 尽量把手机一起框入
+- 不要只框手机
+- 不要只框脸
+- 不要过松把邻座大面积带进去
 
-```
+详细规则见 [annotation_spec.md](/E:/QianFengStudy/PythonProject/InsightClass/docs/annotation_spec.md)。
+
+## 7. 推荐标注工具与流程
+
+推荐工具：
+
+- Roboflow
+- CVAT
+- Label Studio
+
+如果你用 Roboflow，建议流程如下。
+
+### 7.1 创建项目
+
+- Project Type 选择 `Object Detection`
+- 类别只建这三个：
+  - `phone_use`
+  - `talking`
+  - `sleeping`
+
+### 7.2 上传数据
+
+不要只上传 `train`。
+
+建议把以下三个目录都上传并保留 split 概念：
+
+- `images/train`
+- `images/val`
+- `images/test`
+
+如果平台不方便直接保留 split，就至少在本地记录好哪些图属于哪个 split，导出后再按原 split 放回本地目录。
+
+### 7.3 标注顺序建议
+
+建议按这个顺序来：
+
+1. 先抽样 50 到 100 张图试标
+2. 统一一轮判定标准
+3. 再扩大到第一批正式标注
+4. 跑首个 YOLO baseline
+5. 用 baseline 结果辅助后续半自动预标注
+
+### 7.4 标注注意事项
+
+- 宁缺勿滥，不确定先不标
+- `talking` 最容易漂，务必严格
+- 后排小目标和遮挡样本要重点复查
+- 如果某张图没有三类目标行为，不要删图，保留为负样本
+
+## 8. 标注导出后的本地目录
+
+导出 YOLO 标签后，整理成：
+
+```text
 data/processed/classroom_behavior_v1/
 ├─ images/
 │  ├─ train/
-│  │  ├─ video_001_f000000.jpg
-│  │  └─ ...
 │  ├─ val/
 │  └─ test/
-├─ labels/                  ← 标注文件放这里
+├─ labels/
 │  ├─ train/
-│  │  ├─ video_001_f000000.txt    ← 与图片同名的 .txt 文件
-│  │  └─ ...
 │  ├─ val/
 │  └─ test/
 └─ manifest.yaml
 ```
 
-**YOLO 标注格式（每个 .txt 文件）：**
+YOLO 标签格式示例：
+
+```text
+0 0.500000 0.420000 0.260000 0.410000
+1 0.270000 0.500000 0.220000 0.380000
 ```
-0 0.5 0.4 0.2 0.3    # class_id x_center y_center width height
-1 0.3 0.6 0.15 0.25
-```
 
----
+说明：
 
-## 第五部分：数据质检
+- 每一行表示一个行为目标框
+- 格式为 `class_id x_center y_center width height`
+- 数值相对图片宽高归一化到 `0~1`
 
-### 5.1 运行质检脚本
+### 8.1 没有目标行为的图片怎么处理
+
+这类图应该保留。
+
+做法取决于你的标注平台导出方式：
+
+- 有些平台会导出空 `.txt` 文件
+- 有些平台不会生成对应标签文件
+
+对当前项目来说，两种情况都可以接受，但更推荐保留空标签文件，便于后续管理。
+
+## 9. 运行质检
 
 ```powershell
 python -m insightclass inspect-yolo `
@@ -231,28 +353,18 @@ python -m insightclass inspect-yolo `
   --output reports/dataset_inspection.json
 ```
 
-**质检内容：**
-- 空标签检查
-- 缺失标签检查
-- 类别 ID 检查
-- 框越界检查
-- 极小框检查
-- 类别分布统计
+重点看这些问题：
 
-### 5.2 查看质检报告
+- 缺失标签文件
+- 空标签文件
+- 类别 ID 异常
+- 框越界
+- 极小框过多
+- 类别分布明显失衡
 
-```powershell
-# 查看报告内容
-cat reports/dataset_inspection.json
-```
+如果 `talking` 的数量很多但质量不稳，宁可先删掉一部分模糊样本，也不要为了数量硬保留。
 
-**重点关注：**
-- `missing_labels`：有图片但没有对应标注文件
-- `empty_labels`：标注文件存在但内容为空
-- `out_of_bounds`：标注框超出图片边界
-- `class_distribution`：各类别标注数量是否均衡
-
-### 5.3 生成 YOLO 数据集配置
+## 10. 生成 YOLO 数据配置
 
 ```powershell
 python -m insightclass write-yolo-yaml `
@@ -261,250 +373,197 @@ python -m insightclass write-yolo-yaml `
   --output data/processed/classroom_behavior_v1/yolo_dataset.yaml
 ```
 
-**执行后会生成：**
-```
-data/processed/classroom_behavior_v1/
-└─ yolo_dataset.yaml    # Kaggle 训练时需要的配置文件
-```
+## 11. 上传 Kaggle 或 Colab 训练
 
----
+### 11.1 打包数据
 
-## 第六部分：打包上传到 Kaggle
+在 PowerShell 下可以直接压缩：
 
-### 6.1 创建 Kaggle 数据集
-
-#### 步骤 1：打包数据
 ```powershell
-# 进入数据目录
-cd data/processed
-
-# 打包成 zip（Windows 可以用压缩工具）
-tar -a -c -f classroom_behavior_v1.zip classroom_behavior_v1
+Compress-Archive `
+  -Path data\processed\classroom_behavior_v1 `
+  -DestinationPath data\processed\classroom_behavior_v1.zip `
+  -Force
 ```
 
-或者直接用文件资源管理器压缩 `classroom_behavior_v1` 文件夹。
+### 11.2 Kaggle
 
-#### 步骤 2：上传到 Kaggle
-1. 访问 https://www.kaggle.com/datasets
-2. 点击 "New Dataset"
-3. 上传 `classroom_behavior_v1.zip`
-4. 命名为 `classroom-behavior-v1`
-5. 设置为 Private（仅自己可见）
-6. 点击 "Create"
+推荐流程：
 
-### 6.2 创建 Kaggle Notebook
+1. 新建 Dataset
+2. 上传 `classroom_behavior_v1.zip`
+3. 新建 Notebook
+4. 开启 GPU
+5. 将该数据集加到 Notebook
 
-1. 访问 https://www.kaggle.com/code
-2. 点击 "New Notebook"
-3. 在右侧 "Settings" 中：
-   - **Accelerator**: 选择 GPU（T4 或 P100）
-   - **Data Sources**: 添加刚才上传的数据集
+### 11.3 Colab
 
----
+推荐流程：
 
-## 第七部分：Kaggle 训练
+1. 把数据放到 Google Drive 或其他云存储
+2. 克隆项目
+3. 安装依赖
+4. 跑统一训练命令
 
-### 7.1 Notebook 代码
+## 12. 训练基线模型
 
-在 Kaggle Notebook 中按顺序执行以下代码：
+如果走项目配置方式，直接用：
 
-#### Cell 1: 安装依赖
-```python
-!pip install ultralytics
+```powershell
+python -m insightclass train --config configs/training.ultralytics.example.yaml
 ```
 
-#### Cell 2: 加载数据
-```python
-import os
+Kaggle 上通常把配置里的路径改成类似：
 
-# Kaggle 数据路径
-DATASET_PATH = "/kaggle/input/classroom-behavior-v1/classroom_behavior_v1"
-print(f"数据集路径: {DATASET_PATH}")
-print(f"文件列表: {os.listdir(DATASET_PATH)}")
-```
+- 数据：`/kaggle/input/...`
+- 输出：`/kaggle/working/experiments`
 
-#### Cell 3: 训练模型
-```python
-from ultralytics import YOLO
+首轮基线建议：
 
-# 加载预训练模型
-model = YOLO("yolo11n.pt")
+- 模型：`yolo11n.pt`
+- `imgsz=960`
+- `epochs=80`
+- 先不要同时改太多超参数
 
-# 开始训练
-results = model.train(
-    data=f"{DATASET_PATH}/yolo_dataset.yaml",
-    imgsz=960,
-    epochs=80,
-    batch=16,
-    device=0,  # 使用 GPU
-    project="/kaggle/working/experiments",
-    name="baseline_yolo11n_v0_1_e80",
-    pretrained=True,
-    patience=30,
-    plots=True,
-)
-```
+## 13. 下载训练结果
 
-#### Cell 4: 验证模型
-```python
-# 在验证集上评估
-metrics = model.val()
-print(f"mAP50: {metrics.box.map50:.4f}")
-print(f"mAP50-95: {metrics.box.map:.4f}")
-```
+重点下载：
 
-#### Cell 5: 测试推理
-```python
-# 用测试图片测试
-import glob
+- `weights/best.pt`
+- `weights/last.pt`
+- `results.csv`
+- `results.png`
+- `confusion_matrix.png`
+- `experiment_record.json`
 
-test_images = glob.glob(f"{DATASET_PATH}/images/test/*.jpg")[:5]
-if test_images:
-    results = model.predict(
-        source=test_images[0],
-        conf=0.25,
-        save=True,
-        project="/kaggle/working/predictions",
-        name="test",
-    )
-    print(f"预测完成，结果保存在 /kaggle/working/predictions/test/")
-```
+建议保留完整 run 目录，方便后续实验比较。
 
-### 7.2 训练时间参考
+## 14. 本机离线推理
 
-| GPU | 数据量 | Epochs | 预计时间 |
-|-----|--------|--------|----------|
-| T4 | 500 张 | 80 | 15-30 分钟 |
-| T4 | 2000 张 | 80 | 1-2 小时 |
-| P100 | 500 张 | 80 | 10-20 分钟 |
+修改 [inference.ultralytics.example.yaml](/E:/QianFengStudy/PythonProject/InsightClass/configs/inference.ultralytics.example.yaml)：
 
----
+- `weights_path` 指向下载回来的 `best.pt`
+- `source` 指向你的测试视频
+- `output_dir` 指向输出目录
 
-## 第八部分：下载训练结果
-
-### 8.1 下载内容
-
-训练完成后，从 Kaggle 下载以下文件：
-
-```
-experiments/baseline_yolo11n_v0_1_e80/
-├─ weights/
-│  ├─ best.pt           ← 最佳模型权重（必须下载）
-│  └─ last.pt           ← 最后一轮权重
-├─ results.csv          ← 训练指标
-├─ results.png          ← 训练曲线图
-├─ confusion_matrix.png ← 混淆矩阵
-└─ args.yaml            ← 训练参数
-```
-
-### 8.2 放到本地项目
-
-```
-InsightClass/
-└─ experiments/
-   └─ baseline_yolo11n_v0_1_e80/
-      └─ weights/
-         └─ best.pt    ← 放到这里
-```
-
----
-
-## 第九部分：本地推理测试
-
-### 9.1 修改推理配置
-
-编辑 `configs/inference.ultralytics.example.yaml`：
-
-```yaml
-backend: ultralytics
-weights_path: experiments/baseline_yolo11n_v0_1_e80/weights/best.pt  # 指向下载的权重
-source: demo/input/test_video.mp4  # 你的测试视频
-output_dir: demo/output/test_result
-confidence: 0.25
-iou: 0.45
-image_size: 960
-device: cpu  # 本地用 CPU
-save_frames: false
-save_video: true
-class_names:
-  - phone_use
-  - talking
-  - sleeping
-```
-
-### 9.2 执行推理
+执行：
 
 ```powershell
 python -m insightclass predict --config configs/inference.ultralytics.example.yaml
 ```
 
-### 9.3 可视化结果（可选）
+如果装了 `supervision`，还可以渲染首帧预览：
 
 ```powershell
-python -m insightclass render-first-frame --config configs/inference.ultralytics.example.yaml
+python -m insightclass render-first-frame `
+  --config configs/inference.ultralytics.example.yaml
 ```
 
----
+## 15. 结果怎么判断
 
-## 快速检查清单
+首期不要只盯着总 `mAP`。
 
-开始前确认：
+更应该重点看：
 
-- [ ] Python 3.10+ 已安装
-- [ ] 项目依赖已安装（`pip install -e .[ultralytics]`）
-- [ ] 视频已放到 `data/raw_videos/` 目录
-- [ ] 视频格式为 mp4/avi/mov/mkv/wmv/flv
+- `phone_use` 是否已经能稳定抓到
+- `sleeping` 是否和“低头写字”混淆严重
+- `talking` 是否误检很多普通转头
+- 后排小目标是否几乎全漏
+- 演示视频主观效果是否可接受
 
-数据准备阶段：
+也就是说，首期验收以“闭环跑通 + 类别行为有初步可学性”为主，不要过早设死精度线。
 
-- [ ] `create-manifest` 执行成功
-- [ ] `extract-frames` 执行成功，图片已生成
-- [ ] 图片已上传到 Roboflow 并完成标注
-- [ ] 标注文件已放到 `labels/` 目录
-- [ ] `inspect-yolo` 质检通过
-- [ ] `write-yolo-yaml` 生成配置文件
+## 16. 下一步怎么升级
 
-Kaggle 训练阶段：
+如果首轮结果显示：
 
-- [ ] 数据集已上传到 Kaggle
-- [ ] Notebook 已创建并配置 GPU
-- [ ] 训练完成，mAP50 达到预期（建议 > 0.5）
-- [ ] `best.pt` 已下载到本地
+- `phone_use` 效果不错
+- `sleeping` 中等可用
+- `talking` 很差
 
-本地测试阶段：
+这并不奇怪。
 
-- [ ] 推理配置已修改
-- [ ] 推理命令执行成功
-- [ ] 输出视频/图片已生成
+推荐升级顺序：
 
----
+1. 先继续优化标注质量和数据量
+2. 调整 `imgsz`、模型规模、训练强度
+3. 对 `talking` 重新收紧标注边界
+4. 如果仍然差，再考虑二阶段方案
 
-## 常见问题
+更重的二阶段方案通常是：
 
-### Q1: 视频太多怎么办？
-可以先用少量视频（5-10 个）跑通流程，再逐步增加数据。
+- 先做人检测 / 跟踪
+- 再做人行为分类
+- 或直接改成时序视频模型
 
-### Q2: 标注太慢怎么办？
-- 先标注 100-200 张，训练一个初始模型
-- 用初始模型预测未标注图片，人工修正
-- 逐步扩大数据集
+## 17. 快速检查清单
 
-### Q3: mAP 太低怎么办？
-- 增加标注数据量
-- 检查标注质量（质检报告）
-- 尝试更大的模型（yolo11s.pt, yolo11m.pt）
-- 调整超参数（epochs, image_size）
+开始前：
 
-### Q4: Kaggle 训练超时怎么办？
-- 减少 epochs 数量
-- 减小 image_size（960 → 640）
-- 增大 batch_size（如果 GPU 显存足够）
+- [ ] `QF_DL` 环境可用
+- [ ] `python -m insightclass --help` 正常
+- [ ] 视频已放到 `data/raw_videos`
 
----
+数据准备后：
 
-## 技术支持
+- [ ] manifest 已生成
+- [ ] 抽帧完成
+- [ ] split 已固定
+- [ ] 第一批样本已试标
 
-如有问题，请参考：
-- [项目指导文档](project_guide.md)
+标注后：
+
+- [ ] 三类标签名与配置一致
+- [ ] 正常学生未被强行标为一个类别
+- [ ] 负样本图片已保留
+- [ ] 已跑质检
+
+训练后：
+
+- [ ] `best.pt` 已保存
+- [ ] `experiment_record.json` 已保存
+- [ ] 已完成本机离线推理
+
+## 18. 常见问题
+
+### Q1: `talking` 很难标，先不做行不行
+
+可以。
+
+如果第一轮你发现 `talking` 定义很飘，可以先只做：
+
+- `phone_use`
+- `sleeping`
+
+等两类 baseline 稳定后，再把 `talking` 单独拉回来。
+
+### Q2: 没有 `认真听课` 类别，会不会导致模型把所有人都预测成异常
+
+不会自动这样。
+
+只要训练图中包含大量正常学生背景，而这些学生没有被标成目标框，模型就会学到“不是所有学生都有目标行为”。
+
+### Q3: 为什么不先做 `person + behavior`
+
+因为首期你最需要的是快速验证数据、标签体系和基线可学性。
+
+`person + behavior` 更强，但它会显著增加：
+
+- 标注成本
+- 代码复杂度
+- 数据歧义
+
+### Q4: 什么情况下应该放弃单帧 YOLO，改做二阶段或时序
+
+如果出现下面这些情况，就该认真考虑升级：
+
+- `talking` 长期误检高、召回低
+- `sleeping` 和“低头写字”分不开
+- 你需要按“每个学生”稳定统计全班状态
+- 你需要做持续时间判断，而不是单帧状态判断
+
+## 19. 配套文档
+
+- [项目总指南](project_guide.md)
 - [标注规范](annotation_spec.md)
 - [实验手册](experiment_playbook.md)

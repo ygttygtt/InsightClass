@@ -34,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     extract_parser.add_argument("--manifest", required=True)
     extract_parser.add_argument("--fps", type=float, default=1.0)
     extract_parser.add_argument("--max-frames-per-video", type=int, default=None)
+    extract_parser.add_argument("--target-width", type=int, default=960, help="Resize frames to this width (default 960, 0 to keep original)")
+    extract_parser.add_argument("--seed", type=int, default=42, help="Random seed for frame sampling (default 42)")
 
     inspect_parser = subparsers.add_parser("inspect-yolo", help="Inspect YOLO dataset labels")
     inspect_parser.add_argument("--dataset-root", required=True)
@@ -99,10 +101,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "extract-frames":
         manifest = load_manifest(args.manifest)
+        target_width = args.target_width if args.target_width > 0 else None
         metadata_path = extract_frames_from_manifest(
             manifest=manifest,
             fps=args.fps,
             max_frames_per_video=args.max_frames_per_video,
+            target_width=target_width,
+            seed=args.seed,
         )
         print(f"Saved frame index to {metadata_path.resolve()}")
         return 0

@@ -10,7 +10,7 @@ from insightclass.utils.serialization import load_yaml, save_yaml
 
 
 def discover_videos(raw_videos_dir: str | Path) -> list[Path]:
-    directory = Path(raw_videos_dir)
+    directory = Path(raw_videos_dir).resolve()
     if not directory.exists():
         raise FileNotFoundError(f"Raw video directory not found: {directory}")
     return sorted(path for path in directory.rglob("*") if path.is_file() and is_video_file(path))
