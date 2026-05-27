@@ -460,14 +460,12 @@ git archive -o insightclass.zip HEAD
 ### 11.3 在训练机器上安装和运行
 
 ```bash
-# 1. 解压/克隆项目
+# 1. 克隆项目
+git clone https://gitee.com/ygttygtt/InsightClass.git
 cd InsightClass
 
 # 2. 安装依赖
-pip install -U uv
-uv pip install -e ".[gpu]"    # GPU 版本
-# 或
-uv pip install -e ".[cpu]"    # CPU 版本
+pip install -e .[ultralytics]
 
 # 3. 环境检查
 python -m insightclass --help
