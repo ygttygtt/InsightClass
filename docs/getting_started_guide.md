@@ -5,7 +5,7 @@
 1. 本地整理原始视频
 2. 抽帧并标注三类目标行为
 3. 导出 YOLO 数据集
-4. 在 Kaggle 或 Colab 训练首个基线模型
+4. 在有显卡的电脑上训练首个基线模型
 5. 把权重下载回本机做离线视频推理和结果回放
 
 这份文档特别回答三个核心问题：
@@ -13,6 +13,41 @@
 - 学生行为能不能先用 YOLO 这种框标注方案做
 - 正常听课的学生要不要标
 - 首期标注到底怎么打才更稳
+
+## 0. 当前项目状态
+
+> **更新于 2026-05-27**
+
+已完成：
+
+- [x] 12 个课堂视频抽帧（每个视频 25 帧，共 300 张）
+- [x] 使用 X-AnyLabeling 完成全部 300 张图片的标注
+- [x] 数据集整理脚本 `scripts/prepare_dataset.py`（按视频级别随机切分，90% 训练 / 10% 测试）
+- [x] 训练配置 `configs/training.yaml` 已就绪
+
+数据集概况：
+
+| 项目 | 数值 |
+|------|------|
+| 总帧数 | 300 |
+| 训练集 | 275 帧（11 个视频） |
+| 测试集 | 25 帧（1 个视频，随机选取） |
+| phone_use 框数 | 193 (32.5%) |
+| talking 框数 | 343 (57.8%) |
+| sleeping 框数 | 57 (9.6%) |
+
+**下一步：上传到有显卡的电脑训练。** 参见 [第 11 节](#11-上传到有显卡的电脑训练)。
+
+### 快速命令（当前阶段）
+
+```bash
+# 1. 整理数据集（已执行过，如需重新整理可再跑）
+conda run -n QF_DL python scripts/prepare_dataset.py
+
+# 2. 训练（在有显卡的电脑上执行）
+pip install -e .[ultralytics]
+python -m insightclass train --config configs/training.yaml
+```
 
 ## 1. 先回答你的关键疑问
 
@@ -305,20 +340,21 @@ data/processed/classroom_behavior_v1/
 
 ## 8. 标注导出后的本地目录
 
-导出 YOLO 标签后，整理成：
+导出 YOLO 标签后，运行 `scripts/prepare_dataset.py` 自动整理成：
 
 ```text
 data/processed/classroom_behavior_v1/
 ├─ images/
-│  ├─ train/
-│  ├─ val/
-│  └─ test/
+│  ├─ train/    (275 张)
+│  └─ test/     (25 张)
 ├─ labels/
-│  ├─ train/
-│  ├─ val/
-│  └─ test/
-└─ manifest.yaml
+│  ├─ train/    (275 个 txt)
+│  └─ test/     (25 个 txt)
+└─ yolo_dataset.yaml
 ```
+
+> 注意：当前数据集只有 train 和 test 两个 split，没有 val。
+> Ultralytics 训练时会自动从 train 中划分一部分作为 val。
 
 YOLO 标签格式示例：
 
@@ -373,9 +409,36 @@ python -m insightclass write-yolo-yaml `
   --output data/processed/classroom_behavior_v1/yolo_dataset.yaml
 ```
 
-## 11. 上传 Kaggle 或 Colab 训练
+## 11. 上传到有显卡的电脑训练
 
-### 11.1 打包数据
+### 11.1 需要上传的文件
+
+只需上传以下文件到训练机器：
+
+```text
+InsightClass/
+├── configs/
+│   ├── classes.yaml
+│   └── training.yaml
+├── data/
+│   └── processed/
+│       └── classroom_behavior_v1/
+│           ├── images/
+│           │   ├── train/   (275 张 jpg)
+│           │   └── test/    (25 张 jpg)
+│           ├── labels/
+│           │   ├── train/   (275 个 txt)
+│           │   └── test/    (25 个 txt)
+│           └── yolo_dataset.yaml
+├── src/
+│   └── insightclass/
+├── pyproject.toml
+└── scripts/
+```
+
+不需要上传：`data/raw_videos/`、`data/annotation_batch_01/`、`data/labels_01/`、`experiments/`。
+
+### 11.2 打包数据
 
 在 PowerShell 下可以直接压缩：
 
@@ -386,44 +449,80 @@ Compress-Archive `
   -Force
 ```
 
-### 11.2 Kaggle
+或打包整个项目（排除视频和临时文件）：
 
-推荐流程：
+```powershell
+# 先在 .gitignore 确认 data/raw_videos/ 已排除
+git archive -o insightclass.zip HEAD
+# 然后把 data/processed/ 单独加进去
+```
 
-1. 新建 Dataset
-2. 上传 `classroom_behavior_v1.zip`
-3. 新建 Notebook
-4. 开启 GPU
-5. 将该数据集加到 Notebook
+### 11.3 在训练机器上安装和运行
 
-### 11.3 Colab
+```bash
+# 1. 解压/克隆项目
+cd InsightClass
 
-推荐流程：
+# 2. 安装依赖
+pip install -U uv
+uv pip install -e ".[gpu]"    # GPU 版本
+# 或
+uv pip install -e ".[cpu]"    # CPU 版本
 
-1. 把数据放到 Google Drive 或其他云存储
-2. 克隆项目
-3. 安装依赖
-4. 跑统一训练命令
+# 3. 环境检查
+python -m insightclass --help
+
+# 4. 开始训练
+python -m insightclass train --config configs/training.yaml
+```
+
+### 11.4 训练参数说明
+
+当前配置 `configs/training.yaml`：
+
+| 参数 | 值 | 说明 |
+|------|------|------|
+| model_weights | yolo11n.pt | YOLO11 nano，轻量快速 |
+| image_size | 960 | 输入图片尺寸 |
+| epochs | 80 | 训练轮数 |
+| batch_size | 16 | 批次大小（显存不够可改 8） |
+| device | 0 | GPU 编号 |
+| patience | 30 | 早停轮数 |
+
+如果显存不足（如 4GB 以下），修改 `configs/training.yaml`：
+
+```yaml
+batch_size: 8      # 或 4
+image_size: 640    # 降低分辨率
+```
+
+### 11.5 Kaggle / Colab 训练
+
+也可以上传到 Kaggle 或 Colab：
+
+1. 新建 Dataset，上传 `classroom_behavior_v1.zip`
+2. 新建 Notebook，开启 GPU
+3. 克隆项目并安装依赖
+4. 修改 `training.yaml` 中的 `data_config_path` 为 Kaggle 路径
+5. 运行训练命令
 
 ## 12. 训练基线模型
 
-如果走项目配置方式，直接用：
+直接用项目配置：
 
-```powershell
-python -m insightclass train --config configs/training.ultralytics.example.yaml
+```bash
+python -m insightclass train --config configs/training.yaml
 ```
 
-Kaggle 上通常把配置里的路径改成类似：
+当前配置（`configs/training.yaml`）：
 
-- 数据：`/kaggle/input/...`
-- 输出：`/kaggle/working/experiments`
-
-首轮基线建议：
-
-- 模型：`yolo11n.pt`
+- 模型：`yolo11n.pt`（YOLO11 nano，轻量快速）
 - `imgsz=960`
 - `epochs=80`
-- 先不要同时改太多超参数
+- `batch_size=16`
+- `patience=30`（早停）
+
+Kaggle 上需要把 `data_config_path` 改为 Kaggle 路径：
 
 ## 13. 下载训练结果
 
@@ -500,28 +599,23 @@ python -m insightclass render-first-frame `
 
 开始前：
 
-- [ ] `QF_DL` 环境可用
-- [ ] `python -m insightclass --help` 正常
-- [ ] 视频已放到 `data/raw_videos`
+- [x] `QF_DL` 环境可用
+- [x] `python -m insightclass --help` 正常
+- [x] 视频已放到 `data/raw_videos`
 
 数据准备后：
 
-- [ ] manifest 已生成
-- [ ] 抽帧完成
-- [ ] split 已固定
-- [ ] 第一批样本已试标
-
-标注后：
-
-- [ ] 三类标签名与配置一致
-- [ ] 正常学生未被强行标为一个类别
-- [ ] 负样本图片已保留
-- [ ] 已跑质检
+- [x] 抽帧完成（300 张，12 个视频各 25 帧）
+- [x] 标注完成（使用 X-AnyLabeling）
+- [x] 数据集已整理（`scripts/prepare_dataset.py`，按视频级别随机切分）
+- [x] split 已固定（train=275, test=25）
 
 训练后：
 
+- [ ] 上传到有显卡的电脑
+- [ ] `python -m insightclass train --config configs/training.yaml`
 - [ ] `best.pt` 已保存
-- [ ] `experiment_record.json` 已保存
+- [ ] 下载权重回本机
 - [ ] 已完成本机离线推理
 
 ## 18. 常见问题
