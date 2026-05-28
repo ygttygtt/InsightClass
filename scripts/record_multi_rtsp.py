@@ -60,8 +60,9 @@ BASE_OUTPUT_DIR = "data/raw_videos"
 
 # 录制参数
 RECORD_FPS = 15
-RECORD_WIDTH = None   # None = 保持原始分辨率
-FOURCC = "avc1"       # H.264，失败自动回退 mp4v
+RECORD_WIDTH = 960     # 对齐抽帧脚本 --target-width 960，训练 imgsz=960
+                       # 原始 1080p → 960x540，体积约降至 1/4
+FOURCC = "avc1"        # H.264，失败自动回退 mp4v
 
 stop_event = Event()
 
