@@ -25,36 +25,16 @@ def test_environment():
         print("\nPyTorch: 未安装")
 
     try:
-        import torchvision
-        print(f"\nTorchvision 版本: {torchvision.__version__}")
-    except ImportError:
-        print("\nTorchvision: 未安装")
-
-    try:
-        import torchaudio
-        print(f"Torchaudio 版本: {torchaudio.__version__}")
-    except ImportError:
-        print("Torchaudio: 未安装")
-
-    try:
-        import tensorflow as tf
-        print(f"\nTensorFlow 版本: {tf.__version__}")
-        gpus = tf.config.list_physical_devices("GPU")
-        print(f"TensorFlow GPU 设备: {len(gpus)}")
-    except ImportError:
-        print("\nTensorFlow: 未安装")
-
-    try:
         import numpy as np
         print(f"\nNumPy 版本: {np.__version__}")
     except ImportError:
         print("\nNumPy: 未安装")
 
     try:
-        import pandas as pd
-        print(f"Pandas 版本: {pd.__version__}")
+        import yaml
+        print(f"PyYAML 版本: {yaml.__version__}")
     except ImportError:
-        print("Pandas: 未安装")
+        print("PyYAML: 未安装")
 
     try:
         import cv2
@@ -63,34 +43,16 @@ def test_environment():
         print("OpenCV: 未安装")
 
     try:
-        import matplotlib
-        print(f"Matplotlib 版本: {matplotlib.__version__}")
-    except ImportError:
-        print("Matplotlib: 未安装")
-
-    try:
-        import sklearn
-        print(f"Scikit-learn 版本: {sklearn.__version__}")
-    except ImportError:
-        print("Scikit-learn: 未安装")
-
-    try:
-        import timm
-        print(f"timm 版本: {timm.__version__}")
-    except ImportError:
-        print("timm: 未安装")
-
-    try:
         import ultralytics
         print(f"Ultralytics 版本: {ultralytics.__version__}")
     except ImportError:
         print("Ultralytics: 未安装")
 
     try:
-        import onnx
-        print(f"ONNX 版本: {onnx.__version__}")
+        import supervision
+        print(f"Supervision 版本: {supervision.__version__}")
     except ImportError:
-        print("ONNX: 未安装")
+        print("Supervision: 未安装")
 
     print("\n" + "=" * 60)
     print("环境测试完成")

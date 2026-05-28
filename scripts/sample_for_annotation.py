@@ -3,6 +3,7 @@
 import argparse
 import random
 import shutil
+from collections import Counter
 from pathlib import Path
 
 
@@ -33,7 +34,6 @@ def main():
         shutil.copy2(img, output_dir / img.name)
 
     # 按来源视频统计
-    from collections import Counter
     video_counts = Counter(img.name.rsplit("_f", 1)[0] for img in sampled)
     print(f"Copied {len(sampled)} images to {output_dir}")
     print(f"\nPer video breakdown:")

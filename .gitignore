@@ -75,9 +75,6 @@ configs/dataset_manifest_v2.yaml
 # YOLO training cache
 *.cache
 
-# Environment
-.env
-
 # OS
 .DS_Store
 Thumbs.db

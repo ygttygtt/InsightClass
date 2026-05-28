@@ -27,10 +27,8 @@ from threading import Event, Thread
 import cv2
 
 # ---------- 摄像头配置 ----------
-import os
-
-USERNAME = os.environ.get("RTSP_USERNAME", "admin")
-PASSWORD = os.environ.get("RTSP_PASSWORD", "")
+USERNAME = "admin"
+PASSWORD = "1000phone"
 PORT = 554
 RTSP_PATH = "/Streaming/Channels/101"  # 主码流
 

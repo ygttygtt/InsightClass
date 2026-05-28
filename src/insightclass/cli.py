@@ -49,16 +49,16 @@ def build_parser() -> argparse.ArgumentParser:
     yaml_parser.add_argument("--output", required=True)
 
     train_parser = subparsers.add_parser("train", help="Run model training")
-    train_parser.add_argument("--config", required=True)
+    train_parser.add_argument("--config", required=True, help="训练配置文件路径 (YAML)")
 
     val_parser = subparsers.add_parser("validate", help="Run model validation")
-    val_parser.add_argument("--config", required=True)
+    val_parser.add_argument("--config", required=True, help="验证配置文件路径 (YAML)")
 
     predict_parser = subparsers.add_parser("predict", help="Run inference on images or video")
-    predict_parser.add_argument("--config", required=True)
+    predict_parser.add_argument("--config", required=True, help="推理配置文件路径 (YAML)")
 
     render_parser = subparsers.add_parser("render-first-frame", help="Render the first frame prediction with supervision")
-    render_parser.add_argument("--config", required=True)
+    render_parser.add_argument("--config", required=True, help="推理配置文件路径 (YAML)")
 
     compare_parser = subparsers.add_parser("compare-experiments", help="Export experiment summary CSV")
     compare_parser.add_argument("--experiments-root", required=True)
