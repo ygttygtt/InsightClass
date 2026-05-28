@@ -4,7 +4,7 @@ import random
 import os
 
 raw_dir = "data/raw_videos"
-out_dir = "data/annotation_batch_01"
+out_dir = "data/labeling/batch_01_annot"
 os.makedirs(out_dir, exist_ok=True)
 
 videos = sorted(f for f in os.listdir(raw_dir) if f.endswith((".mkv", ".mp4", ".avi")))

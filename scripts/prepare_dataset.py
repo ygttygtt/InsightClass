@@ -5,7 +5,7 @@
     conda run -n <your-env-name> python scripts/prepare_dataset.py
 
 输入:
-    data/labels_01/          — X-AnyLabeling 导出的 jpg + txt 混合目录
+    data/labeling/batch_01/  — X-AnyLabeling 导出的 jpg + txt 混合目录
 
 输出:
     data/processed/classroom_behavior_v1/
@@ -24,7 +24,7 @@ import shutil
 from pathlib import Path
 
 # ── 配置 ──────────────────────────────────────────────────
-SRC_DIR = Path("data/labels_01")
+SRC_DIR = Path("data/labeling/batch_01")
 OUT_DIR = Path("data/processed/classroom_behavior_v1")
 TEST_RATIO = 0.10       # 10% 测试集
 SEED = 42               # 固定随机种子，保证可复现

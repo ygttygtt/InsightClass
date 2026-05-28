@@ -10,7 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description="Sample images from train set for annotation")
     parser.add_argument("--source", default="data/processed/classroom_behavior_v1/images/train",
                         help="Train images directory")
-    parser.add_argument("--output", default="data/annotation_batch_01",
+    parser.add_argument("--output", default="data/labeling/batch_01_annot",
                         help="Output directory for sampled images")
     parser.add_argument("--count", type=int, default=300,
                         help="Number of images to sample")

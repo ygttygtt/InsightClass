@@ -1,0 +1,12 @@
+dataset_name: classroom_behavior_v2
+dataset_version: v0.2
+class_config: configs/classes.yaml
+raw_videos_dir: data/raw_videos/front
+processed_dir: data/processed/classroom_behavior_v2
+train_ratio: 0.7
+val_ratio: 0.2
+seed: 42
+notes: |
+  第二批数据集，基于 RTSP 录制的新视频。
+  录制来源: Hikvision DS-2CD3T35-I3 前视角摄像头。
+  目标抽帧率: 10 张/分钟 (fps=0.167)。

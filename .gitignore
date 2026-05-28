@@ -51,7 +51,7 @@ htmlcov/
 # Data (large files)
 data/raw_videos/
 data/X-AnyLabeling*.exe
-data/annotation_batch_01/*.json
+data/labeling/batch_01_annot/*.json
 experiments/
 *.pt
 *.pth
