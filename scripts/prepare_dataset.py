@@ -2,7 +2,7 @@
 将 X-AnyLabeling 标注结果整理为 YOLO 训练格式。
 
 用法:
-    conda run -n QF_DL python scripts/prepare_dataset.py
+    conda run -n <your-env-name> python scripts/prepare_dataset.py
 
 输入:
     data/labels_01/          — X-AnyLabeling 导出的 jpg + txt 混合目录
@@ -153,7 +153,7 @@ def main():
 
     print(f"\n{'=' * 60}")
     print("完成! 数据集已准备好，可以开始训练:")
-    print(f"  conda run -n QF_DL python -m insightclass train --config configs/training.yaml")
+    print(f"  conda run -n <your-env-name> python -m insightclass train --config configs/training.yaml")
     print("=" * 60)
 
 

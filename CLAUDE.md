@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 InsightClass is a classroom student behavior detection pipeline. It detects three behaviors from front-of-classroom camera footage: `phone_use` (玩手机), `talking` (交谈), `sleeping` (打瞌睡). The project follows a src-layout and is configured via YAML files.
 
-**Conda environment**: `QF_DL` — all commands should run in this environment:
+**Conda environment**: 所有命令应在你的 conda 环境中运行（各成员环境名不同，以下用 `<your-env-name>` 代替）：
 ```
-conda run -n QF_DL python ...
+conda run -n <your-env-name> python ...
 ```
 
 ## Commands
