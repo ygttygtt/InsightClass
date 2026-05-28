@@ -138,6 +138,8 @@ def recorder_thread(ip: str, output_dir: str, show_preview: bool) -> None:
             saved_count += 1
 
         if show_preview:
+            # 注意: 多线程同时调用 imshow/waitKey 在 Windows 上偶尔会卡顿，
+            # 预览仅用于调试，正式录制建议去掉 --preview
             preview = cv2.resize(frame, (min(out_w, 640), min(out_h, 360)))
             cv2.imshow(window_name, preview)
             cv2.waitKey(1)
