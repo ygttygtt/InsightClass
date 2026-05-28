@@ -67,3 +67,5 @@ reports/
 # OS
 .DS_Store
 Thumbs.db
+/data/processed/classroom_behavior_v1/labels/train.cache
+/data/processed/classroom_behavior_v1/labels/test.cache
