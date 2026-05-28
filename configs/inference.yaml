@@ -1,0 +1,15 @@
+backend: ultralytics
+weights_path: experiments/baseline_yolo11n_v1_e80/weights/best.pt
+source: data/processed/classroom_behavior_v1/images/test
+output_dir: demo/output/baseline_v1
+confidence: 0.25
+iou: 0.45
+image_size: 960
+device: cpu
+save_frames: false
+save_video: true
+class_names:
+  - phone_use
+  - talking
+  - sleeping
+extra_args: {}
