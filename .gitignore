@@ -50,6 +50,7 @@ htmlcov/
 
 # Data (large files)
 data/raw_videos/
+data/processed/
 data/X-AnyLabeling*.exe
 data/labeling/batch_01_annot/*.json
 experiments/
@@ -65,8 +66,18 @@ reports/
 *.avi
 *.mov
 
+# Local working configs (use *.example.yaml templates)
+configs/training.yaml
+configs/inference.yaml
+configs/inference_baseline.yaml
+configs/dataset_manifest_v2.yaml
+
+# YOLO training cache
+*.cache
+
+# Environment
+.env
+
 # OS
 .DS_Store
 Thumbs.db
-/data/processed/classroom_behavior_v1/labels/train.cache
-/data/processed/classroom_behavior_v1/labels/test.cache

@@ -32,6 +32,8 @@ def build_split_map(
     total = len(shuffled)
     train_end = max(1, int(total * train_ratio))
     val_end = min(total, train_end + max(1 if total >= 3 else 0, int(total * val_ratio)))
+    if val_end == train_end and total >= 2:
+        val_end = min(total, train_end + 1)
     return {
         "train": [path.name for path in shuffled[:train_end]],
         "val": [path.name for path in shuffled[train_end:val_end]],

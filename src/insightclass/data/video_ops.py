@@ -70,7 +70,13 @@ def extract_frames_from_manifest(
 
                 native_fps = capture.get(cv2.CAP_PROP_FPS) or 0
                 total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-                sample_interval = max(1, round(native_fps / fps)) if native_fps > 0 and fps > 0 else 1
+                if native_fps <= 0 or total_frames <= 0:
+                    print(f"  [{split}] {video_name}: skipped (corrupted or unreadable)")
+                    capture.release()
+                    del capture
+                    gc.collect()
+                    continue
+                sample_interval = max(1, round(native_fps / fps)) if fps > 0 else 1
 
                 # Build candidate frame indices (same logic as before: evenly spaced by fps)
                 candidate_indices = list(range(0, total_frames, sample_interval))

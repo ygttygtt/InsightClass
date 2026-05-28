@@ -79,9 +79,10 @@ def write_yolo_yaml(out: Path, train_count: int, test_count: int):
     """生成 Ultralytics 兼容的 yolo_dataset.yaml。"""
     yaml_content = f"""\
 # YOLO 数据集配置 — 由 scripts/prepare_dataset.py 自动生成
+# 注意: 此脚本仅做 train/test 切分，无 val 集。正式流程请使用 CLI (create-manifest + extract-frames)。
 path: {out.as_posix()}
 train: images/train
-val: images/test
+val: images/train
 
 names:
   0: phone_use

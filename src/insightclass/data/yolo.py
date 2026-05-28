@@ -90,13 +90,14 @@ def write_yolo_dataset_yaml(
     output_path: str | Path,
 ) -> Path:
     root = Path(dataset_root).resolve()
-    payload = {
+    payload: dict[str, Any] = {
         "path": str(root),
         "train": "images/train",
         "val": "images/val",
-        "test": "images/test",
         "names": {index: name for index, name in enumerate(classes)},
     }
+    if (root / "images" / "test").is_dir() and any((root / "images" / "test").iterdir()):
+        payload["test"] = "images/test"
     save_yaml(output_path, payload)
     return Path(output_path)
 

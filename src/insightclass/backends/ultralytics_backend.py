@@ -134,8 +134,6 @@ class UltralyticsBackend(DetectorBackend):
                     detections=detections,
                 )
             )
-        if predictions:
-            predictions[0].detections = predictions[0].detections
         inference_meta = {
             "latency_sec_total": round(elapsed, 4),
             "frame_count": len(predictions),
