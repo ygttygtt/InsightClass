@@ -3,15 +3,19 @@
 同时连接多台 Hikvision 摄像头，每路独立线程录制。支持按前后视角分组，方便多人分工。
 
 用法:
-    # 按视角分组录制（推荐）
-    python scripts/record_multi_rtsp.py --view front    # 录制前视角（7个）
-    python scripts/record_multi_rtsp.py --view rear     # 录制后视角（9个）
+    # 按视角分组录制全部
+    python scripts/record_multi_rtsp.py --view front    # 录制全部前视角（7个）
+    python scripts/record_multi_rtsp.py --view rear     # 录制全部后视角（9个）
+
+    # 只录部分IP（output 目录按视角区分）
+    python scripts/record_multi_rtsp.py --view front --ips 10.8.14.36 10.8.14.34
+    python scripts/record_multi_rtsp.py --view rear --ips 10.8.14.5 10.8.14.29
+
+    # 手动指定IP + 完全不区分视角
+    python scripts/record_multi_rtsp.py --ips 10.8.14.36 10.8.14.5
 
     # 带预览窗口
-    python scripts/record_multi_rtsp.py --view front --preview
-
-    # 手动指定IP（不受前后组限制）
-    python scripts/record_multi_rtsp.py --ips 10.8.14.36 10.8.14.34
+    python scripts/record_multi_rtsp.py --view front --ips 10.8.14.36 --preview
 """
 
 import argparse
@@ -156,35 +160,44 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-    python scripts/record_multi_rtsp.py --view front          # 录制前视角
-    python scripts/record_multi_rtsp.py --view rear --preview  # 带预览录制后视角
-    python scripts/record_multi_rtsp.py --ips 10.8.14.36 10.8.14.5  # 手动指定IP
+    python scripts/record_multi_rtsp.py --view front                  # 全部前视角
+    python scripts/record_multi_rtsp.py --view rear --ips 10.8.14.5 10.8.14.29  # 后视角中的部分IP
+    python scripts/record_multi_rtsp.py --ips 10.8.14.36 10.8.14.5   # 手动指定，不区分视角
         """,
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--view", choices=["front", "rear"],
-                       help="按视角分组录制: front=前视角(7个), rear=后视角(9个)")
-    group.add_argument("--ips", nargs="+",
-                       help="手动指定IP列表（不使用分组）")
+    parser.add_argument("--view", choices=["front", "rear"], default=None,
+                        help="按视角分组: front=前视角(7个), rear=后视角(9个)。控制输出目录命名")
+    parser.add_argument("--ips", nargs="+", default=None,
+                        help="手动指定要录制的IP列表。不传则录制该视角下的全部IP")
     parser.add_argument("--preview", action="store_true",
                         help="显示每个摄像头的预览窗口")
     parser.add_argument("--output", default=None,
                         help="自定义输出目录（默认 data/raw_videos/{front,rear}/）")
     args = parser.parse_args()
 
-    # 确定要录制的IP和输出目录
+    # 确定要录制的IP列表
     if args.ips:
         ips = args.ips
-        output_dir = args.output or os.path.join(BASE_OUTPUT_DIR, "manual")
-        view_label = "手动指定"
     elif args.view:
         ips = CAMERA_GROUPS[args.view]
-        output_dir = args.output or os.path.join(BASE_OUTPUT_DIR, args.view)
-        view_label = "前视角" if args.view == "front" else "后视角"
     else:
-        # 未指定任何参数，默认全部录制
         ips = CAMERA_GROUPS["front"] + CAMERA_GROUPS["rear"]
-        output_dir = args.output or os.path.join(BASE_OUTPUT_DIR, "all")
+
+    # 确定输出目录和标签
+    if args.output:
+        output_dir = args.output
+    elif args.view:
+        output_dir = os.path.join(BASE_OUTPUT_DIR, args.view)
+    elif args.ips:
+        output_dir = os.path.join(BASE_OUTPUT_DIR, "manual")
+    else:
+        output_dir = os.path.join(BASE_OUTPUT_DIR, "all")
+
+    if args.view:
+        view_label = "前视角" if args.view == "front" else "后视角"
+    elif args.ips:
+        view_label = "手动指定"
+    else:
         view_label = "全部"
 
     print(f"========== 多路RTSP录制 ==========")
