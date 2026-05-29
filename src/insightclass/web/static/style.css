@@ -1,0 +1,91 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+
+/* ---- toolbar ---- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 20px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  flex-wrap: wrap;
+}
+.toolbar h1 { font-size: 20px; white-space: nowrap; }
+.subtitle { font-weight: 400; color: #94a3b8; font-size: 14px; margin-left: 4px; }
+.controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.control-group { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #cbd5e1; }
+.control-group em { font-style: normal; color: #38bdf8; min-width: 36px; text-align: right; }
+.control-group select {
+  padding: 4px 8px; background: #334155; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px; font-size: 13px;
+}
+.control-group input[type=range] { width: 80px; accent-color: #38bdf8; }
+
+/* ---- main layout ---- */
+.main { display: flex; gap: 0; height: calc(100vh - 65px); }
+.viewer { flex: 1; display: flex; flex-direction: column; padding: 16px; min-width: 0; }
+.stats-panel {
+  width: 240px; background: #1e293b; border-left: 1px solid #334155; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+}
+
+/* ---- tabs ---- */
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.tab {
+  padding: 8px 20px; background: transparent; border: 1px solid #334155; color: #94a3b8; cursor: pointer; border-radius: 6px 6px 0 0; font-size: 14px;
+}
+.tab.active { background: #1e293b; color: #e2e8f0; border-bottom-color: transparent; }
+
+/* ---- canvas area ---- */
+.canvas-wrap {
+  flex: 1; position: relative; background: #000; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+}
+#source-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
+#source-video.hidden { display: none; }
+#overlay-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+#overlay-canvas.hidden { display: none; }
+
+.placeholder {
+  color: #64748b; text-align: center; padding: 40px;
+}
+.placeholder.hidden { display: none; }
+
+.loading {
+  position: absolute; inset: 0; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 10;
+}
+.loading.hidden { display: none; }
+.spinner {
+  width: 40px; height: 40px; border: 3px solid #334155; border-top-color: #38bdf8; border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- actions ---- */
+.actions { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+.tab-content { display: flex; gap: 8px; align-items: center; }
+.tab-content.hidden { display: none; }
+.btn {
+  padding: 8px 20px; border: 1px solid #475569; border-radius: 6px; cursor: pointer; font-size: 14px; background: #1e293b; color: #e2e8f0;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.primary { background: #2563eb; border-color: #2563eb; }
+.btn.primary:hover:not(:disabled) { background: #1d4ed8; }
+#file-input { color: #94a3b8; font-size: 13px; }
+
+/* ---- stats panel ---- */
+.stats-panel h2 { font-size: 15px; margin-bottom: 4px; }
+.stat-cards { display: flex; flex-direction: column; gap: 8px; }
+.stat-card {
+  display: flex; align-items: center; gap: 10px; background: #0f172a; border-radius: 6px; padding: 10px 12px;
+}
+.stat-color { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.stat-info { display: flex; justify-content: space-between; flex: 1; font-size: 13px; }
+.stat-label { color: #94a3b8; }
+.stat-count { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.perf-info { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #64748b; }
+.perf-info > div { display: flex; justify-content: space-between; }

@@ -60,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser = subparsers.add_parser("render-first-frame", help="Render the first frame prediction with supervision")
     render_parser.add_argument("--config", required=True, help="推理配置文件路径 (YAML)")
 
+    serve_parser = subparsers.add_parser("serve", help="Start the web server")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    serve_parser.add_argument("--experiments-root", default="experiments", help="Experiments directory (default: experiments)")
+
     compare_parser = subparsers.add_parser("compare-experiments", help="Export experiment summary CSV")
     compare_parser.add_argument("--experiments-root", required=True)
     compare_parser.add_argument("--output", required=True)
@@ -176,6 +181,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compare-experiments":
         csv_path = export_experiment_summary(args.experiments_root, args.output)
         print(f"Saved summary to {csv_path.resolve()}")
+        return 0
+
+    if args.command == "serve":
+        from insightclass.web.server import app, EXPERIMENTS_ROOT, CLASS_CONFIG
+        import uvicorn
+
+        # Override module-level configs from CLI args
+        import insightclass.web.server as server_mod
+        server_mod.EXPERIMENTS_ROOT = Path(args.experiments_root)
+        print(f"Starting InsightClass web server on http://{args.host}:{args.port}")
+        print(f"Experiments root: {Path(args.experiments_root).resolve()}")
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
     parser.error(f"Unknown command: {args.command}")

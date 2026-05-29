@@ -16,6 +16,8 @@ conda run -n <your-env-name> python ...
 ```bash
 # Install (editable, with optional extras)
 pip install -e .[ultralytics,supervision,dev]
+# With web frontend support
+pip install -e .[ultralytics,web]
 
 # Run tests
 python -m pytest tests/
@@ -45,6 +47,9 @@ insightclass render-first-frame --config <same>
 
 # Experiment analysis
 insightclass compare-experiments --experiments-root experiments --output reports/experiment_summary.csv
+
+# Web server
+insightclass serve --host 0.0.0.0 --port 8000 --experiments-root experiments
 ```
 
 ## Architecture
@@ -70,6 +75,14 @@ Video-level splitting is a key design decision to prevent data leakage. Same vid
 ### Optional Dependencies
 
 Lazy-loaded via `optional.py` (`has_package` / `require_package` using `importlib.util.find_spec`). Core package works with just numpy + PyYAML + opencv-python. ultralytics and supervision are optional extras.
+
+### Web Frontend (`web/`)
+
+FastAPI + Jinja2 server providing a browser-based detection UI. Two detection modes:
+- **Camera**: `getUserMedia` captures frames at 5 FPS → `POST /api/detect/frame` → Canvas overlay
+- **Video upload**: `POST /api/detect/upload` → full inference on server → synced playback with detection overlay
+
+Model caching via `model_cache.py` — YOLO instances are cached by weights path, preloaded at startup via lifespan handler.
 
 ### Key Schemas (`schemas.py`)
 

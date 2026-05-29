@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InsightClass - 课堂行为检测</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="toolbar">
+  <h1>InsightClass <span class="subtitle">课堂行为检测</span></h1>
+  <div class="controls">
+    <label class="control-group">
+      <span>模型</span>
+      <select id="model-select">
+        {% for exp in experiments %}
+        <option value="{{ exp.weights_path }}" {% if loop.first %}selected{% endif %}>
+          {{ exp.experiment_id }}
+          {% if exp.metrics and exp.metrics.get('mAP50_95') is not none %}
+            (mAP: {{ "%.3f"|format(exp.metrics['mAP50_95']) }})
+          {% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="control-group">
+      <span>置信度 <em id="conf-val">{{ default_confidence }}</em></span>
+      <input type="range" id="confidence" min="0.05" max="0.95" step="0.05" value="{{ default_confidence }}">
+    </label>
+    <label class="control-group">
+      <span>IoU <em id="iou-val">{{ default_iou }}</em></span>
+      <input type="range" id="iou" min="0.1" max="0.9" step="0.05" value="{{ default_iou }}">
+    </label>
+  </div>
+</header>
+
+<div class="main">
+  <div class="viewer">
+    <div class="tabs">
+      <button class="tab active" data-tab="camera">摄像头检测</button>
+      <button class="tab" data-tab="upload">视频上传</button>
+    </div>
+
+    <div class="canvas-wrap">
+      <video id="source-video" autoplay playsinline muted></video>
+      <canvas id="overlay-canvas"></canvas>
+      <div id="placeholder" class="placeholder">
+        <p>点击「开始检测」启动摄像头，或切换到「视频上传」选择文件</p>
+      </div>
+      <div id="loading" class="loading hidden">
+        <div class="spinner"></div>
+        <p id="loading-text">正在处理...</p>
+      </div>
+    </div>
+
+    <div class="actions">
+      <div class="tab-content" id="tab-camera">
+        <button id="btn-start-camera" class="btn primary">开始检测</button>
+        <button id="btn-stop-camera" class="btn" disabled>停止检测</button>
+      </div>
+      <div class="tab-content hidden" id="tab-upload">
+        <input type="file" id="file-input" accept="video/*">
+        <button id="btn-upload" class="btn primary">开始分析</button>
+      </div>
+    </div>
+  </div>
+
+  <aside class="stats-panel">
+    <h2>检测统计</h2>
+    <div class="stat-cards" id="stat-cards">
+      {% for name, display in display_names.items() %}
+      <div class="stat-card" data-class="{{ name }}">
+        <div class="stat-color" style="background: {{ {'phone_use': '#ef4444', 'talking': '#3b82f6', 'sleeping': '#eab308'}.get(name, '#888') }}"></div>
+        <div class="stat-info">
+          <span class="stat-label">{{ display }}</span>
+          <span class="stat-count" id="count-{{ name }}">0</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="perf-info">
+      <div><span>检测延迟</span><span id="latency">-- ms</span></div>
+      <div><span>检测帧数</span><span id="frame-count">0</span></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+window.DISPLAY_NAMES = {{ display_names | tojson }};
+window.DEFAULT_MODEL = "{{ experiments[0].weights_path if experiments else '' }}";
+</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
