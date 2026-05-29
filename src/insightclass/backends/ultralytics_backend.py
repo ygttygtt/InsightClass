@@ -41,11 +41,18 @@ class UltralyticsBackend(DetectorBackend):
         }
         train_args.update(config.extra_args)
         result = model.train(**train_args)
-        run_dir = Path(result.save_dir)
-        metrics = self._extract_metrics(result)
+
+        # ultralytics >= 8.2: model.train() returns None; find run_dir from disk
+        if result is not None and hasattr(result, "save_dir"):
+            run_dir = Path(result.save_dir)
+            metrics = self._extract_metrics(result)
+        else:
+            run_dir = self._find_run_dir(project_dir, config.run_name)
+            metrics = self._extract_metrics_from_csv(run_dir / "results.csv")
+
         artifacts = self.export_artifacts(str(run_dir))
         record = ExperimentRecord(
-            experiment_id=config.run_name,
+            experiment_id=run_dir.name,
             backend=self.name,
             model_weights=config.model_weights,
             data_version=Path(config.data_config_path).stem,
@@ -70,9 +77,16 @@ class UltralyticsBackend(DetectorBackend):
         }
         val_args.update(config.extra_args)
         result = model.val(**val_args)
-        metrics = self._extract_metrics(result)
-        metrics["save_dir"] = str(Path(result.save_dir).resolve())
-        save_json(Path(result.save_dir) / "validation_metrics.json", metrics)
+
+        if result is not None and hasattr(result, "save_dir"):
+            run_dir = Path(result.save_dir)
+            metrics = self._extract_metrics(result)
+        else:
+            run_dir = self._find_run_dir(config.resolved_project_dir(), f"{config.run_name}_val")
+            metrics = self._extract_metrics_from_csv(run_dir / "results.csv")
+
+        metrics["save_dir"] = str(run_dir.resolve())
+        save_json(run_dir / "validation_metrics.json", metrics)
         return metrics
 
     def predict_images_or_video(self, config: InferenceConfig) -> str:
@@ -197,6 +211,40 @@ class UltralyticsBackend(DetectorBackend):
             for key, value in results_dict.items():
                 if isinstance(value, (int, float, str)):
                     metrics[key] = value
+        return metrics
+
+    @staticmethod
+    def _find_run_dir(project_dir: Path, run_name: str) -> Path:
+        """Find the actual run directory, handling ultralytics suffix like 'run_name-2'."""
+        exact = project_dir / run_name
+        if exact.exists():
+            return exact
+        # ultralytics appends -N suffix when directory already exists
+        candidates = sorted(project_dir.glob(f"{run_name}-*"), key=lambda p: p.stat().st_mtime)
+        if candidates:
+            return candidates[-1]
+        raise FileNotFoundError(f"Training run directory not found under {project_dir} for '{run_name}'")
+
+    @staticmethod
+    def _extract_metrics_from_csv(csv_path: Path) -> dict[str, Any]:
+        """Read final epoch metrics from ultralytics results.csv."""
+        import csv as csv_mod
+
+        metrics: dict[str, Any] = {}
+        if not csv_path.exists():
+            return metrics
+        with csv_path.open(newline="", encoding="utf-8-sig") as f:
+            reader = csv_mod.DictReader(f)
+            rows = list(reader)
+        if not rows:
+            return metrics
+        last = rows[-1]
+        for key, value in last.items():
+            key = key.strip()
+            try:
+                metrics[key] = float(value)
+            except (ValueError, TypeError):
+                metrics[key] = value.strip() if isinstance(value, str) else value
         return metrics
 
     @staticmethod
