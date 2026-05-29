@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -33,6 +34,20 @@ EXPERIMENTS_ROOT = Path("experiments")
 CLASS_CONFIG = Path("configs/classes.yaml")
 DEFAULT_CONFIDENCE = 0.25
 DEFAULT_IOU = 0.45
+
+CAMERA_GROUPS = {
+    "front": [
+        "10.8.14.36", "10.8.14.34", "10.8.14.30", "10.8.14.10",
+        "10.8.14.18", "10.8.14.26", "10.8.14.28",
+    ],
+    "rear": [
+        "10.8.14.5", "10.8.14.29", "10.8.14.21", "10.8.14.19",
+        "10.8.14.17", "10.8.14.11", "10.8.14.22", "10.8.14.24", "10.8.14.32",
+    ],
+}
+RTSP_USERNAME = "admin"
+RTSP_PASSWORD = "1000phone"
+RTSP_PORT = 554
 
 
 def _validate_weights_path(path: str) -> str:
@@ -261,4 +276,65 @@ async def detect_upload(
         total_latency_sec=total_latency,
         video_width=video_width,
         video_height=video_height,
+    )
+
+
+@app.get("/api/cameras")
+async def list_cameras():
+    cameras = []
+    for group, ips in CAMERA_GROUPS.items():
+        for ip in ips:
+            cameras.append({
+                "ip": ip,
+                "group": group,
+                "group_label": "前视角" if group == "front" else "后视角",
+                "rtsp_url": f"rtsp://{RTSP_USERNAME}:{RTSP_PASSWORD}@{ip}:{RTSP_PORT}/Streaming/Channels/101",
+            })
+    return cameras
+
+
+@app.post("/api/detect/rtsp")
+async def detect_rtsp(
+    rtsp_url: str = Form(...),
+    model: str = Form(default=""),
+    confidence: float = Form(default=DEFAULT_CONFIDENCE),
+    iou: float = Form(default=DEFAULT_IOU),
+):
+    t0 = time.time()
+
+    weights_path = model if model else (_find_default_weights() or "")
+    if weights_path:
+        weights_path = _validate_weights_path(weights_path)
+    yolo = get_model(weights_path)
+
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        return FrameDetectionResponse(detections=[], latency_ms=0, frame_width=0, frame_height=0)
+
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret or frame is None:
+        return FrameDetectionResponse(detections=[], latency_ms=0, frame_width=0, frame_height=0)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / "frame.jpg"
+        cv2.imwrite(str(tmp_path), frame)
+        results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
+        display_names = _load_class_display_names()
+
+        if results and len(results) > 0:
+            detections = _extract_detections(results[0], display_names)
+            h, w = results[0].orig_shape
+        else:
+            detections = []
+            h, w = frame.shape[:2]
+
+    latency = (time.time() - t0) * 1000
+    return FrameDetectionResponse(
+        detections=detections,
+        latency_ms=round(latency, 1),
+        frame_width=int(w),
+        frame_height=int(h),
     )
