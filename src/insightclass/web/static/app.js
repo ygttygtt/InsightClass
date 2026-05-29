@@ -159,9 +159,11 @@ async function startCamera() {
       } catch (e) {
         console.error('Frame detection error:', e);
       }
+      if (state.detecting) {
+        state.detectTimer = setTimeout(sendFrame, 50);
+      }
     }
-
-    state.detectTimer = setInterval(sendFrame, 200);
+    sendFrame();
 
     // Draw loop: render video + detections continuously
     function drawLoop() {
@@ -202,7 +204,7 @@ async function startCamera() {
 
 function stopCamera() {
   state.detecting = false;
-  if (state.detectTimer) { clearInterval(state.detectTimer); state.detectTimer = null; }
+  if (state.detectTimer) { clearTimeout(state.detectTimer); state.detectTimer = null; }
   if (state.animId) { cancelAnimationFrame(state.animId); state.animId = null; }
   if (state.stream) {
     state.stream.getTracks().forEach(t => t.stop());
@@ -254,38 +256,43 @@ async function uploadVideo() {
     resizeCanvas();
 
     // Sync detection overlay with playback
+    let drawPending = false;
     els.video.ontimeupdate = function () {
-      if (state.mode !== 'upload' || !state.uploadResults) return;
-      const currentTime = els.video.currentTime;
-      const frameIdx = Math.round(currentTime * state.uploadFps);
-      const frameData = state.uploadResults.frames[frameIdx] || null;
+      if (drawPending) return;
+      drawPending = true;
+      requestAnimationFrame(() => {
+        drawPending = false;
+        if (state.mode !== 'upload' || !state.uploadResults) return;
+        const currentTime = els.video.currentTime;
+        const frameIdx = Math.round(currentTime * state.uploadFps);
+        if (frameIdx < 0 || frameIdx >= state.uploadResults.frames.length) return;
+        const frameData = state.uploadResults.frames[frameIdx];
 
-      const cvsW = els.canvas.width;
-      const cvsH = els.canvas.height;
-      const vw = state.uploadResults.video_width || els.video.videoWidth;
-      const vh = state.uploadResults.video_height || els.video.videoHeight;
+        const cvsW = els.canvas.width;
+        const cvsH = els.canvas.height;
+        const vw = state.uploadResults.video_width || els.video.videoWidth;
+        const vh = state.uploadResults.video_height || els.video.videoHeight;
 
-      const scale = Math.min(cvsW / vw, cvsH / vh);
-      const dw = vw * scale;
-      const dh = vh * scale;
-      const dx = (cvsW - dw) / 2;
-      const dy = (cvsH - dh) / 2;
+        const scale = Math.min(cvsW / vw, cvsH / vh);
+        const dw = vw * scale;
+        const dh = vh * scale;
+        const dx = (cvsW - dw) / 2;
+        const dy = (cvsH - dh) / 2;
 
-      els.ctx.clearRect(0, 0, cvsW, cvsH);
-      els.ctx.drawImage(els.video, dx, dy, dw, dh);
+        els.ctx.clearRect(0, 0, cvsW, cvsH);
+        els.ctx.drawImage(els.video, dx, dy, dw, dh);
 
-      if (frameData && frameData.detections.length > 0) {
-        const scaleX = dw / vw;
-        const scaleY = dh / vh;
-        els.ctx.save();
-        els.ctx.translate(dx, dy);
-        drawDetections(frameData.detections, cvsW, cvsH, scaleX, scaleY);
-        els.ctx.restore();
-      }
+        if (frameData && frameData.detections.length > 0) {
+          const scaleX = dw / vw;
+          const scaleY = dh / vh;
+          els.ctx.save();
+          els.ctx.translate(dx, dy);
+          drawDetections(frameData.detections, cvsW, cvsH, scaleX, scaleY);
+          els.ctx.restore();
+        }
 
-      if (frameData) {
         updateStats(frameData.detections, undefined);
-      }
+      });
     };
 
     els.video.play();

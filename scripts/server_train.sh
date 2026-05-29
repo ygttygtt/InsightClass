@@ -6,7 +6,7 @@
 #   bash scripts/server_train.sh yolo26n      # 使用 yolo26n
 #   bash scripts/server_train.sh yolo11n bg   # 后台运行 (nohup)
 # ============================================================
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -61,7 +61,11 @@ echo " InsightClass 训练启动"
 echo " 模型:     $MODEL"
 echo " 配置:     $CONFIG"
 echo " 实验名:   $RUN_NAME"
-echo " GPU:      $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+if command -v nvidia-smi &>/dev/null; then
+    echo " GPU:      $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+else
+    echo " GPU:      CPU (未检测到 NVIDIA GPU)"
+fi
 echo "=========================================="
 
 # ---- 后台模式 ----

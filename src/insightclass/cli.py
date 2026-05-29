@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "serve":
-        from insightclass.web.server import app, EXPERIMENTS_ROOT, CLASS_CONFIG
+        from insightclass.web.server import app
         import uvicorn
 
         # Override module-level configs from CLI args
