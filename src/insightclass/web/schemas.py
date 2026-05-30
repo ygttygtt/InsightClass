@@ -16,6 +16,7 @@ class FrameDetectionResponse(BaseModel):
     latency_ms: float
     frame_width: int
     frame_height: int
+    frame_image: str = ""  # base64-encoded JPEG, empty if unavailable
 
 
 class FrameOut(BaseModel):

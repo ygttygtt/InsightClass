@@ -81,3 +81,7 @@ configs/dataset_manifest_v2.yaml
 # OS
 .DS_Store
 Thumbs.db
+
+# User camera config
+configs/cameras.yaml
+configs/app.yaml

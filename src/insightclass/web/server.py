@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import cv2
+import numpy as np
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from insightclass.backends.factory import build_backend
 from insightclass.evaluation.experiments import collect_experiment_records
 from insightclass.schemas import InferenceConfig
-from insightclass.utils.serialization import load_yaml
+from insightclass.utils.serialization import load_yaml, save_yaml
 from insightclass.web.model_cache import clear_cache, get_model, preload_model
 from insightclass.web.schemas import (
     DetectionOut,
@@ -32,10 +35,12 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 EXPERIMENTS_ROOT = Path("experiments")
 CLASS_CONFIG = Path("configs/classes.yaml")
+CAMERAS_CONFIG = Path("configs/cameras.yaml")
+APP_CONFIG = Path("configs/app.yaml")
 DEFAULT_CONFIDENCE = 0.25
 DEFAULT_IOU = 0.45
 
-CAMERA_GROUPS = {
+DEFAULT_CAMERA_GROUPS = {
     "front": [
         "10.8.14.36", "10.8.14.34", "10.8.14.30", "10.8.14.10",
         "10.8.14.18", "10.8.14.26", "10.8.14.28",
@@ -45,9 +50,67 @@ CAMERA_GROUPS = {
         "10.8.14.17", "10.8.14.11", "10.8.14.22", "10.8.14.24", "10.8.14.32",
     ],
 }
-RTSP_USERNAME = "admin"
-RTSP_PASSWORD = "1000phone"
-RTSP_PORT = 554
+DEFAULT_RTSP_USERNAME = "admin"
+DEFAULT_RTSP_PASSWORD = "1000phone"
+DEFAULT_RTSP_PORT = 554
+
+_rtsp_lock = threading.Lock()
+
+
+class RtspStreamManager:
+    """Manages a persistent RTSP connection and serves MJPEG frames."""
+
+    def __init__(self):
+        self._cap: cv2.VideoCapture | None = None
+        self._url: str = ""
+        self._frame: bytes | None = None
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self, rtsp_url: str) -> bool:
+        if self._running and self._url == rtsp_url:
+            return True
+        self.stop()
+        self._url = rtsp_url
+        self._running = True
+        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread.start()
+        return True
+
+    def stop(self):
+        self._running = False
+        if self._cap:
+            self._cap.release()
+            self._cap = None
+        if self._thread:
+            self._thread.join(timeout=2)
+            self._thread = None
+
+    def get_frame(self) -> bytes | None:
+        with self._lock:
+            return self._frame
+
+    def _capture_loop(self):
+        with _rtsp_lock:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+        self._cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+        if not self._cap.isOpened():
+            self._running = False
+            return
+        while self._running:
+            ret, frame = self._cap.read()
+            if not ret or frame is None:
+                time.sleep(0.1)
+                continue
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            with self._lock:
+                self._frame = buf.tobytes()
+        self._cap.release()
+        self._cap = None
+
+
+_stream_manager = RtspStreamManager()
 
 
 def _validate_weights_path(path: str) -> str:
@@ -88,6 +151,38 @@ def _load_class_display_names() -> dict[str, str]:
     _display_names_cache = {str(k): str(v) for k, v in raw.items()}
     _display_names_mtime = mtime
     return _display_names_cache
+
+
+def _load_custom_cameras() -> list[dict]:
+    if not CAMERAS_CONFIG.exists():
+        return []
+    data = load_yaml(str(CAMERAS_CONFIG))
+    return data.get("cameras", [])
+
+
+def _save_custom_cameras(cameras: list[dict]):
+    CAMERAS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    save_yaml(str(CAMERAS_CONFIG), {"cameras": cameras})
+
+
+def _load_app_config() -> dict:
+    if not APP_CONFIG.exists():
+        return {}
+    return load_yaml(str(APP_CONFIG))
+
+
+def _save_app_config(cfg: dict):
+    APP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    save_yaml(str(APP_CONFIG), cfg)
+
+
+def _get_default_model() -> str:
+    cfg = _load_app_config()
+    return cfg.get("default_model", "")
+
+
+def _build_rtsp_url(ip: str, username: str, password: str, port: int) -> str:
+    return f"rtsp://{username}:{password}@{ip}:{port}/Streaming/Channels/101"
 
 
 def _get_experiments() -> list[dict]:
@@ -150,6 +245,10 @@ app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 async def index(request: Request):
     experiments = _get_experiments()
     display_names = _load_class_display_names()
+    saved_model = _get_default_model()
+    # Use saved model if valid, otherwise first experiment
+    if not saved_model and experiments:
+        saved_model = experiments[0].get("weights_path", "")
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -158,6 +257,7 @@ async def index(request: Request):
             "display_names": display_names,
             "default_confidence": DEFAULT_CONFIDENCE,
             "default_iou": DEFAULT_IOU,
+            "default_model": saved_model,
         },
     )
 
@@ -176,6 +276,21 @@ async def list_experiments():
     ]
 
 
+@app.get("/api/settings/default-model")
+async def get_default_model():
+    return JSONResponse({"model": _get_default_model()})
+
+
+@app.post("/api/settings/default-model")
+async def set_default_model(request: Request):
+    body = await request.json()
+    model = body.get("model", "")
+    cfg = _load_app_config()
+    cfg["default_model"] = model
+    _save_app_config(cfg)
+    return JSONResponse({"ok": True, "model": model})
+
+
 @app.post("/api/detect/frame")
 async def detect_frame(
     image: UploadFile = File(...),
@@ -185,24 +300,27 @@ async def detect_frame(
 ):
     t0 = time.time()
 
-    weights_path = model if model else (_find_default_weights() or "")
-    if weights_path:
-        weights_path = _validate_weights_path(weights_path)
-    yolo = get_model(weights_path)
-
     contents = await image.read()
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "frame.jpg"
-        tmp_path.write_bytes(contents)
-        results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
-        display_names = _load_class_display_names()
+    detections = []
+    h, w = 0, 0
 
-        if results and len(results) > 0:
-            detections = _extract_detections(results[0], display_names)
-            h, w = results[0].orig_shape
-        else:
-            detections = []
-            h, w = 0, 0
+    try:
+        weights_path = model if model else (_find_default_weights() or "")
+        if weights_path:
+            weights_path = _validate_weights_path(weights_path)
+        yolo = get_model(weights_path)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir) / "frame.jpg"
+            tmp_path.write_bytes(contents)
+            results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
+            display_names = _load_class_display_names()
+
+            if results and len(results) > 0:
+                detections = _extract_detections(results[0], display_names)
+                h, w = results[0].orig_shape
+    except Exception:
+        pass  # No model — return empty detections
 
     latency = (time.time() - t0) * 1000
     return FrameDetectionResponse(
@@ -279,18 +397,152 @@ async def detect_upload(
     )
 
 
-@app.get("/api/cameras")
-async def list_cameras():
+def _build_camera_list(include_credentials: bool = False) -> list[dict]:
     cameras = []
-    for group, ips in CAMERA_GROUPS.items():
+    for group, ips in DEFAULT_CAMERA_GROUPS.items():
         for ip in ips:
-            cameras.append({
+            cam = {
                 "ip": ip,
                 "group": group,
                 "group_label": "前视角" if group == "front" else "后视角",
-                "rtsp_url": f"rtsp://{RTSP_USERNAME}:{RTSP_PASSWORD}@{ip}:{RTSP_PORT}/Streaming/Channels/101",
-            })
+                "rtsp_url": _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT),
+                "note": "",
+                "custom": False,
+            }
+            if include_credentials:
+                cam["username"] = DEFAULT_RTSP_USERNAME
+                cam["password"] = DEFAULT_RTSP_PASSWORD
+                cam["port"] = DEFAULT_RTSP_PORT
+            cameras.append(cam)
+    for cam in _load_custom_cameras():
+        entry = {
+            "ip": cam["ip"],
+            "group": cam.get("group", "custom"),
+            "group_label": cam.get("note", "自定义") or "自定义",
+            "rtsp_url": _build_rtsp_url(cam["ip"], cam.get("username", DEFAULT_RTSP_USERNAME), cam.get("password", DEFAULT_RTSP_PASSWORD), cam.get("port", DEFAULT_RTSP_PORT)),
+            "note": cam.get("note", ""),
+            "custom": True,
+        }
+        if include_credentials:
+            entry["username"] = cam.get("username", DEFAULT_RTSP_USERNAME)
+            entry["password"] = cam.get("password", DEFAULT_RTSP_PASSWORD)
+            entry["port"] = cam.get("port", DEFAULT_RTSP_PORT)
+        cameras.append(entry)
     return cameras
+
+
+@app.get("/api/cameras")
+async def list_cameras():
+    return JSONResponse(content=_build_camera_list(), media_type="application/json; charset=utf-8")
+
+
+@app.post("/api/cameras")
+async def add_camera(request: Request):
+    body = await request.json()
+    ip = body.get("ip", "").strip()
+    if not ip:
+        return JSONResponse({"error": "IP is required"}, status_code=400)
+    cameras = _load_custom_cameras()
+    if any(c["ip"] == ip for c in cameras):
+        return JSONResponse({"error": f"Camera {ip} already exists"}, status_code=409)
+    cam = {
+        "ip": ip,
+        "username": body.get("username", DEFAULT_RTSP_USERNAME),
+        "password": body.get("password", DEFAULT_RTSP_PASSWORD),
+        "port": body.get("port", DEFAULT_RTSP_PORT),
+        "note": body.get("note", ""),
+    }
+    cameras.append(cam)
+    _save_custom_cameras(cameras)
+    return JSONResponse({"ok": True, "camera": cam}, media_type="application/json; charset=utf-8")
+
+
+@app.put("/api/cameras/{ip}")
+async def update_camera(ip: str, request: Request):
+    body = await request.json()
+    cameras = _load_custom_cameras()
+    idx = next((i for i, c in enumerate(cameras) if c["ip"] == ip), None)
+    if idx is None:
+        return JSONResponse({"error": "Camera not found"}, status_code=404)
+    cameras[idx].update({
+        "username": body.get("username", cameras[idx].get("username", DEFAULT_RTSP_USERNAME)),
+        "password": body.get("password", cameras[idx].get("password", DEFAULT_RTSP_PASSWORD)),
+        "port": body.get("port", cameras[idx].get("port", DEFAULT_RTSP_PORT)),
+        "note": body.get("note", cameras[idx].get("note", "")),
+    })
+    _save_custom_cameras(cameras)
+    return JSONResponse({"ok": True}, media_type="application/json; charset=utf-8")
+
+
+@app.delete("/api/cameras/{ip}")
+async def delete_camera(ip: str):
+    cameras = _load_custom_cameras()
+    cameras = [c for c in cameras if c["ip"] != ip]
+    _save_custom_cameras(cameras)
+    return JSONResponse({"ok": True}, media_type="application/json; charset=utf-8")
+
+
+@app.post("/api/cameras/test")
+async def test_cameras(request: Request):
+    body = await request.json()
+    camera_list = body.get("cameras", [])
+    if not camera_list:
+        camera_list = _build_camera_list(include_credentials=True)
+
+    async def _test_one(cam):
+        if isinstance(cam, dict):
+            ip = cam["ip"]
+            rtsp_url = cam.get("rtsp_url", _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT))
+        else:
+            ip = str(cam)
+            rtsp_url = _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT)
+        ok = await asyncio.to_thread(_test_camera_connection, rtsp_url)
+        return ip, "connected" if ok else "disconnected"
+
+    results_list = await asyncio.gather(*[_test_one(cam) for cam in camera_list])
+    return JSONResponse(dict(results_list), media_type="application/json; charset=utf-8")
+
+
+def _test_camera_connection(rtsp_url: str) -> bool:
+    try:
+        with _rtsp_lock:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            return False
+        ret, frame = cap.read()
+        cap.release()
+        return ret and frame is not None
+    except Exception:
+        return False
+
+
+@app.get("/api/stream/rtsp")
+async def stream_rtsp(rtsp_url: str):
+    """MJPEG stream — one persistent connection, no base64 overhead."""
+
+    def generate():
+        _stream_manager.start(rtsp_url)
+        while True:
+            frame = _stream_manager.get_frame()
+            if frame:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                )
+            else:
+                time.sleep(0.05)
+
+    return StreamingResponse(
+        generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.post("/api/stream/stop")
+async def stream_stop():
+    _stream_manager.stop()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/detect/rtsp")
@@ -302,34 +554,39 @@ async def detect_rtsp(
 ):
     t0 = time.time()
 
-    weights_path = model if model else (_find_default_weights() or "")
-    if weights_path:
-        weights_path = _validate_weights_path(weights_path)
-    yolo = get_model(weights_path)
+    # Ensure stream is running for this URL
+    _stream_manager.start(rtsp_url)
 
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-    if not cap.isOpened():
+    # Grab the latest frame from the persistent stream
+    frame_bytes = _stream_manager.get_frame()
+    if not frame_bytes:
         return FrameDetectionResponse(detections=[], latency_ms=0, frame_width=0, frame_height=0)
 
-    ret, frame = cap.read()
-    cap.release()
-
-    if not ret or frame is None:
+    # Decode frame for YOLO inference
+    arr = np.frombuffer(frame_bytes, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if frame is None:
         return FrameDetectionResponse(detections=[], latency_ms=0, frame_width=0, frame_height=0)
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "frame.jpg"
-        cv2.imwrite(str(tmp_path), frame)
-        results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
-        display_names = _load_class_display_names()
+    h, w = frame.shape[:2]
+    detections = []
+    try:
+        weights_path = model if model else (_find_default_weights() or "")
+        if weights_path:
+            weights_path = _validate_weights_path(weights_path)
+        yolo = get_model(weights_path)
 
-        if results and len(results) > 0:
-            detections = _extract_detections(results[0], display_names)
-            h, w = results[0].orig_shape
-        else:
-            detections = []
-            h, w = frame.shape[:2]
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir) / "frame.jpg"
+            cv2.imwrite(str(tmp_path), frame)
+            results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
+            display_names = _load_class_display_names()
+
+            if results and len(results) > 0:
+                detections = _extract_detections(results[0], display_names)
+                h, w = results[0].orig_shape
+    except Exception:
+        pass
 
     latency = (time.time() - t0) * 1000
     return FrameDetectionResponse(

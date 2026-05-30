@@ -175,6 +175,144 @@ body {
   background: var(--bg-elevated);
   border-radius: 3px;
 }
+.camera-item .cam-note {
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.camera-item .cam-status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.camera-item .cam-status.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.camera-item .cam-status.disconnected { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.camera-item .cam-status.unknown { background: var(--text-muted); }
+.camera-item .cam-delete {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color .15s;
+}
+.camera-item .cam-delete:hover { color: var(--red); }
+.camera-item.custom:hover .cam-delete { display: block; }
+
+/* ---- Camera Actions ---- */
+#panel-rtsp > .section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cam-actions { display: flex; gap: 4px; }
+.cam-action-btn {
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  transition: all .15s;
+}
+.cam-action-btn:hover { color: var(--accent-light); border-color: var(--accent); }
+
+/* ---- Camera Form ---- */
+.cam-form-wrapper {
+  margin-top: 12px;
+}
+.cam-form-wrapper.hidden { display: none; }
+.cam-form {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.cam-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-hover);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cam-form-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+}
+.cam-form-close:hover { color: var(--text-primary); }
+.cam-form-body { padding: 10px 12px; }
+.cam-field { margin-bottom: 8px; }
+.cam-field:last-child { margin-bottom: 0; }
+.cam-field label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+}
+.cam-field .required { color: var(--red); }
+.cam-field input {
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.cam-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.cam-field input::placeholder { color: var(--text-muted); }
+.cam-form-row { display: flex; gap: 8px; }
+.cam-form-row .cam-field { flex: 1; }
+.cam-form-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.cam-btn {
+  padding: 5px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all .15s;
+}
+.cam-btn-cancel {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+.cam-btn-cancel:hover { background: var(--bg-hover); }
+.cam-btn-save {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.cam-btn-save:hover { background: var(--accent-light); }
 
 /* ---- Upload Zone ---- */
 .upload-zone {
@@ -211,6 +349,21 @@ body {
 }
 .btn-action:hover:not(:disabled) { background: var(--accent-light); }
 .btn-action:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ---- Params ---- */
+.btn-set-default {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  transition: all .2s;
+  vertical-align: middle;
+}
+.btn-set-default:hover { color: var(--yellow); }
+.btn-set-default.saved { color: var(--green); }
 
 /* ---- Params ---- */
 .params-section { margin-top: auto; }

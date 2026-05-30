@@ -36,7 +36,7 @@
         <button class="source-btn active" data-source="rtsp">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
           <span>RTSP 监控</span>
-          <em>主功能</em>
+          <em>实时</em>
         </button>
         <button class="source-btn" data-source="webcam">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
@@ -55,9 +55,56 @@
 
     <!-- RTSP Camera List -->
     <div class="sidebar-section source-panel active" id="panel-rtsp">
-      <div class="section-label">摄像头列表</div>
+      <div class="section-label">
+        摄像头列表
+        <div class="cam-actions">
+          <button class="cam-action-btn" id="btn-test-cameras" title="测试连通性">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          </button>
+          <button class="cam-action-btn" id="btn-add-camera" title="添加摄像头">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+      </div>
       <div class="camera-list" id="camera-list">
         <div class="camera-loading">加载中...</div>
+      </div>
+      <!-- Add Camera Form (hidden by default) -->
+      <div class="cam-form-wrapper hidden" id="cam-form-wrapper">
+        <div class="cam-form">
+          <div class="cam-form-header">
+            <span id="cam-form-title">添加摄像头</span>
+            <button class="cam-form-close" id="cam-form-close">&times;</button>
+          </div>
+          <div class="cam-form-body">
+            <div class="cam-field">
+              <label>IP 地址 <span class="required">*</span></label>
+              <input type="text" id="cam-ip" placeholder="192.168.1.100">
+            </div>
+            <div class="cam-form-row">
+              <div class="cam-field">
+                <label>用户名</label>
+                <input type="text" id="cam-username" placeholder="admin">
+              </div>
+              <div class="cam-field">
+                <label>密码</label>
+                <input type="password" id="cam-password" placeholder="password">
+              </div>
+            </div>
+            <div class="cam-field">
+              <label>端口</label>
+              <input type="number" id="cam-port" value="554" placeholder="554">
+            </div>
+            <div class="cam-field">
+              <label>备注</label>
+              <input type="text" id="cam-note" placeholder="教室名称或位置描述">
+            </div>
+          </div>
+          <div class="cam-form-footer">
+            <button class="cam-btn cam-btn-cancel" id="cam-form-cancel">取消</button>
+            <button class="cam-btn cam-btn-save" id="cam-form-save">保存</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -95,10 +142,14 @@
     <div class="sidebar-section params-section">
       <div class="section-label">模型与参数</div>
       <div class="param-row">
-        <label>模型</label>
+        <label>模型
+          <button class="btn-set-default" id="btn-set-default" title="设为默认模型">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
+        </label>
         <select id="model-select">
           {% for exp in experiments %}
-          <option value="{{ exp.weights_path }}" {% if loop.first %}selected{% endif %}>
+          <option value="{{ exp.weights_path }}" {% if exp.weights_path == default_model %}selected{% endif %}>
             {{ exp.experiment_id }}
           </option>
           {% endfor %}
@@ -181,7 +232,7 @@
 
 <script>
 window.DISPLAY_NAMES = {{ display_names | tojson }};
-window.DEFAULT_MODEL = "{{ experiments[0].weights_path if experiments else '' }}";
+window.DEFAULT_MODEL = "{{ default_model }}";
 </script>
 <script src="/static/app.js"></script>
 </body>

@@ -17,6 +17,7 @@ const state = {
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
+const esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
 
 // ---- Elements ----
 const els = {
@@ -158,23 +159,47 @@ function hidePlaceholder() {
 async function loadCameras() {
   try {
     const res = await fetch('/api/cameras');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const cameras = await res.json();
-    const list = $('#camera-list');
-    list.innerHTML = '';
-    cameras.forEach((cam, i) => {
-      const div = document.createElement('div');
-      div.className = 'camera-item' + (i === 0 ? ' active' : '');
-      div.dataset.url = cam.rtsp_url;
-      div.dataset.ip = cam.ip;
-      div.innerHTML = `<span class="cam-dot"></span><span class="cam-ip">${cam.ip}</span><span class="cam-group">${cam.group_label}</span>`;
-      div.addEventListener('click', () => selectCamera(div, cam));
-      list.appendChild(div);
-    });
-    if (cameras.length > 0) {
-      state.selectedCamera = cameras[0];
-    }
+    state.cameras = cameras;
+    renderCameraList(cameras);
   } catch (e) {
-    $('#camera-list').innerHTML = '<div class="camera-loading">加载失败</div>';
+    console.error('Camera list error:', e);
+    $('#camera-list').innerHTML = '<div class="camera-loading">加载失败，请检查服务是否正常运行</div>';
+  }
+}
+
+function renderCameraList(cameras) {
+  const list = $('#camera-list');
+  list.innerHTML = '';
+  if (cameras.length === 0) {
+    list.innerHTML = '<div class="camera-loading">暂无摄像头，点击 + 添加</div>';
+    return;
+  }
+  cameras.forEach((cam, i) => {
+    const div = document.createElement('div');
+    div.className = 'camera-item' + (i === 0 ? ' active' : '') + (cam.custom ? ' custom' : '');
+    div.dataset.url = cam.rtsp_url;
+    div.dataset.ip = cam.ip;
+    const statusClass = cam._status || 'unknown';
+    const noteSpan = cam.note ? `<span class="cam-note" title="${esc(cam.note)}">${esc(cam.note)}</span>` : '';
+    const deleteBtn = cam.custom ? `<button class="cam-delete" data-ip="${esc(cam.ip)}" title="删除">&times;</button>` : '';
+    div.innerHTML = `<span class="cam-dot"></span><span class="cam-ip">${esc(cam.ip)}</span>${noteSpan}<span class="cam-group">${esc(cam.group_label)}</span><span class="cam-status ${esc(statusClass)}"></span>${deleteBtn}`;
+    div.addEventListener('click', (e) => {
+      if (e.target.classList.contains('cam-delete')) return;
+      selectCamera(div, cam);
+    });
+    const delBtn = div.querySelector('.cam-delete');
+    if (delBtn) {
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteCamera(cam.ip);
+      });
+    }
+    list.appendChild(div);
+  });
+  if (cameras.length > 0 && !state.selectedCamera) {
+    state.selectedCamera = cameras[0];
   }
 }
 
@@ -184,7 +209,116 @@ function selectCamera(el, cam) {
   state.selectedCamera = cam;
 }
 
+// ---- Camera CRUD ----
+async function addCamera(data) {
+  const res = await fetch('/api/cameras', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const result = await res.json();
+  if (!res.ok) throw new Error(result.error || 'Failed');
+  await loadCameras();
+  return result;
+}
+
+async function deleteCamera(ip) {
+  if (!confirm(`确认删除摄像头 ${ip}？`)) return;
+  try {
+    await fetch(`/api/cameras/${ip}`, { method: 'DELETE' });
+    if (state.selectedCamera && state.selectedCamera.ip === ip) {
+      state.selectedCamera = null;
+    }
+    await loadCameras();
+  } catch (e) {
+    alert('删除失败: ' + e.message);
+  }
+}
+
+// ---- Camera Connectivity Test ----
+async function testCameraConnectivity() {
+  const btn = $('#btn-test-cameras');
+  btn.disabled = true;
+  btn.style.animation = 'spin .7s linear infinite';
+  try {
+    const cameras = state.cameras || [];
+    const res = await fetch('/api/cameras/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cameras }),
+    });
+    const results = await res.json();
+    const items = $$('.camera-item');
+    items.forEach(item => {
+      const ip = item.dataset.ip;
+      const statusEl = item.querySelector('.cam-status');
+      if (statusEl && results[ip]) {
+        statusEl.className = 'cam-status ' + results[ip];
+      }
+    });
+    if (state.cameras) {
+      state.cameras.forEach(cam => {
+        if (results[cam.ip]) cam._status = results[cam.ip];
+      });
+    }
+  } catch (e) {
+    console.error('Camera test error:', e);
+  } finally {
+    btn.disabled = false;
+    btn.style.animation = '';
+  }
+}
+
+// ---- Camera Form ----
+function showCameraForm() {
+  const wrapper = $('#cam-form-wrapper');
+  wrapper.classList.remove('hidden');
+  $('#cam-form-title').textContent = '添加摄像头';
+  $('#cam-ip').value = '';
+  $('#cam-ip').disabled = false;
+  $('#cam-username').value = '';
+  $('#cam-password').value = '';
+  $('#cam-port').value = '554';
+  $('#cam-note').value = '';
+  $('#cam-ip').focus();
+}
+
+function hideCameraForm() {
+  $('#cam-form-wrapper').classList.add('hidden');
+}
+
+async function saveCameraForm() {
+  const ip = $('#cam-ip').value.trim();
+  if (!ip) { alert('请输入 IP 地址'); return; }
+  try {
+    await addCamera({
+      ip,
+      username: $('#cam-username').value.trim() || undefined,
+      password: $('#cam-password').value.trim() || undefined,
+      port: parseInt($('#cam-port').value) || undefined,
+      note: $('#cam-note').value.trim(),
+    });
+    hideCameraForm();
+  } catch (e) {
+    alert('保存失败: ' + e.message);
+  }
+}
+
 // ---- RTSP Detection ----
+function drawOverlay(cvsW, cvsH) {
+  els.ctx.fillStyle = '#ef4444';
+  els.ctx.beginPath();
+  els.ctx.arc(20, 20, 5, 0, Math.PI * 2);
+  els.ctx.fill();
+  els.ctx.fillStyle = '#fff';
+  els.ctx.font = '500 11px "JetBrains Mono", monospace';
+  els.ctx.fillText('LIVE', 30, 24);
+  if (state.selectedCamera) {
+    els.ctx.fillStyle = 'rgba(255,255,255,.5)';
+    els.ctx.font = '400 11px "JetBrains Mono", monospace';
+    els.ctx.fillText(state.selectedCamera.ip, 20, cvsH - 12);
+  }
+}
 async function detectRtspOnce() {
   if (!state.selectedCamera) return null;
   const fd = new FormData();
@@ -201,63 +335,68 @@ async function startRtspLoop() {
   state.detecting = true;
   els.btnStart.disabled = true;
   els.btnStop.disabled = false;
+
   hidePlaceholder();
-  resizeCanvas();
   resetStats();
 
-  // Create a placeholder image for the canvas (RTSP has no local video element)
-  // We'll draw detection results on a black background
-  const placeholderImg = new Image();
-  placeholderImg.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const rtspUrl = state.selectedCamera.rtsp_url;
 
-  async function loop() {
+  // Start MJPEG stream in the <img> element — browser handles decoding natively
+  els.image.classList.remove('hidden');
+  els.image.src = '/api/stream/rtsp?rtsp_url=' + encodeURIComponent(rtspUrl);
+
+  // Wait for the stream to start delivering frames
+  await new Promise((resolve) => {
+    els.image.onload = resolve;
+    els.image.onerror = resolve;
+    setTimeout(resolve, 2000);
+  });
+
+  // Set canvas to match rendered size
+  const wrap = els.canvas.parentElement;
+  els.canvas.width = wrap.clientWidth;
+  els.canvas.height = wrap.clientHeight;
+
+  // Poll for detections separately (lightweight, no base64 overhead)
+  async function detectLoop() {
     if (!state.detecting) return;
     try {
-      const data = await detectRtspOnce();
-      if (!data) return;
+      const fd = new FormData();
+      fd.append('rtsp_url', rtspUrl);
+      fd.append('model', getModelPath());
+      fd.append('confidence', getConfidence());
+      fd.append('iou', getIou());
+      const res = await fetch('/api/detect/rtsp', { method: 'POST', body: fd });
+      const data = await res.json();
       state.lastResults = data.detections || [];
 
-      // Draw on canvas
+      // Draw detection overlay on canvas
       const cvsW = els.canvas.width, cvsH = els.canvas.height;
-      els.ctx.fillStyle = '#000';
-      els.ctx.fillRect(0, 0, cvsW, cvsH);
+      els.ctx.clearRect(0, 0, cvsW, cvsH);
 
-      if (data.frame_width > 0 && data.frame_height > 0) {
-        const scale = Math.min(cvsW / data.frame_width, cvsH / data.frame_height);
-        const dw = data.frame_width * scale, dh = data.frame_height * scale;
-        const dx = (cvsW - dw) / 2, dy = (cvsH - dh) / 2;
-
-        if (state.lastResults.length > 0) {
-          els.ctx.save();
-          els.ctx.translate(dx, dy);
-          drawDetections(state.lastResults, dw / data.frame_width, dh / data.frame_height);
-          els.ctx.restore();
+      if (data.frame_width > 0 && data.frame_height > 0 && state.lastResults.length > 0) {
+        // Match the img's object-fit: contain scaling
+        const imgAspect = data.frame_width / data.frame_height;
+        const wrapAspect = cvsW / cvsH;
+        let drawW, drawH, drawX, drawY;
+        if (imgAspect > wrapAspect) {
+          drawW = cvsW; drawH = cvsW / imgAspect; drawX = 0; drawY = (cvsH - drawH) / 2;
+        } else {
+          drawH = cvsH; drawW = cvsH * imgAspect; drawX = (cvsW - drawW) / 2; drawY = 0;
         }
-
-        // Draw "LIVE" indicator
-        els.ctx.fillStyle = '#ef4444';
-        els.ctx.beginPath();
-        els.ctx.arc(20, 20, 5, 0, Math.PI * 2);
-        els.ctx.fill();
-        els.ctx.fillStyle = '#fff';
-        els.ctx.font = '500 11px "JetBrains Mono", monospace';
-        els.ctx.fillText('LIVE', 30, 24);
-
-        // Draw camera IP
-        els.ctx.fillStyle = 'rgba(255,255,255,.5)';
-        els.ctx.font = '400 11px "JetBrains Mono", monospace';
-        els.ctx.fillText(state.selectedCamera.ip, 20, cvsH - 12);
+        els.ctx.save();
+        els.ctx.translate(drawX, drawY);
+        drawDetections(state.lastResults, drawW / data.frame_width, drawH / data.frame_height);
+        els.ctx.restore();
       }
 
       updateStats(state.lastResults, data.latency_ms);
     } catch (e) {
-      console.error('RTSP detection error:', e);
+      console.error('Detection error:', e);
     }
-    if (state.detecting) {
-      state.detectTimer = setTimeout(loop, 100);
-    }
+    if (state.detecting) state.detectTimer = setTimeout(detectLoop, 300);
   }
-  loop();
+  detectLoop();
 }
 
 // ---- Webcam ----
@@ -415,10 +554,14 @@ function stopAll() {
     state.stream.getTracks().forEach(t => t.stop());
     state.stream = null;
   }
+  // Stop MJPEG stream
+  fetch('/api/stream/stop', { method: 'POST' }).catch(() => {});
   els.video.srcObject = null;
   els.video.src = '';
   els.video.classList.add('hidden');
   els.video.ontimeupdate = null;
+  els.image.src = '';
+  els.image.classList.add('hidden');
   state.uploadResults = null;
   state.mode = null;
   els.btnStart.disabled = false;
@@ -476,6 +619,35 @@ window.addEventListener('resize', resizeCanvas);
       input.dispatchEvent(new Event('change'));
     }
   });
+});
+
+// ---- Set Default Model ----
+$('#btn-set-default').addEventListener('click', async () => {
+  const model = getModelPath();
+  if (!model) return;
+  try {
+    await fetch('/api/settings/default-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+    const btn = $('#btn-set-default');
+    btn.classList.add('saved');
+    setTimeout(() => btn.classList.remove('saved'), 1500);
+  } catch (e) {
+    console.error('Failed to save default model:', e);
+  }
+});
+
+// ---- Camera Management Events ----
+$('#btn-add-camera').addEventListener('click', showCameraForm);
+$('#btn-test-cameras').addEventListener('click', testCameraConnectivity);
+$('#cam-form-close').addEventListener('click', hideCameraForm);
+$('#cam-form-cancel').addEventListener('click', hideCameraForm);
+$('#cam-form-save').addEventListener('click', saveCameraForm);
+$('#cam-form-wrapper').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') saveCameraForm();
+  if (e.key === 'Escape') hideCameraForm();
 });
 
 // ---- Init ----
