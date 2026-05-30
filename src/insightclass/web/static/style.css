@@ -268,6 +268,15 @@ body {
 .camera-item .cam-status.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
 .camera-item .cam-status.disconnected { background: var(--red); box-shadow: 0 0 8px var(--red); }
 .camera-item .cam-status.unknown { background: var(--text-muted); }
+.camera-item .cam-status.testing {
+  background: var(--yellow);
+  box-shadow: 0 0 8px var(--yellow);
+  animation: pulse-testing 1s ease-in-out infinite;
+}
+@keyframes pulse-testing {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 .camera-item .cam-delete {
   display: none;
   background: none;

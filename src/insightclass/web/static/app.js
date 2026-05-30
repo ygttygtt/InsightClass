@@ -218,6 +218,7 @@ async function loadCameras() {
     const cameras = await res.json();
     state.cameras = cameras;
     renderCameraList(cameras);
+
     // Auto-select camera from query param (e.g. /?camera=10.8.14.36)
     const params = new URLSearchParams(window.location.search);
     const targetIp = params.get('camera');
@@ -225,6 +226,24 @@ async function loadCameras() {
       const items = $$('.camera-item');
       items.forEach(el => {
         if (el.dataset.ip === targetIp) el.click();
+      });
+      return;
+    }
+
+    // First visit: run connectivity test and auto-connect to first online camera
+    if (state.source === 'rtsp' && !state.selectedCamera) {
+      testCameraConnectivity().then(() => {
+        // Find first connected camera and click it
+        const items = $$('.camera-item');
+        for (const el of items) {
+          const dot = el.querySelector('.cam-status');
+          if (dot && dot.classList.contains('connected')) {
+            el.click();
+            return;
+          }
+        }
+        // If no connected camera found, click first one anyway
+        if (items.length > 0) items[0].click();
       });
     }
   } catch (e) {
@@ -337,13 +356,19 @@ function selectCamera(el, cam) {
   $$('.camera-item').forEach(c => c.classList.remove('active'));
   el.classList.add('active');
 
-  // If switching to a different camera, restart the stream immediately
+  // If switching to a different camera, restart the stream
   const changed = !state.selectedCamera || state.selectedCamera.ip !== cam.ip;
+  const wasDetecting = state.detecting;
   state.selectedCamera = cam;
 
   if (state.source === 'rtsp' && changed) {
     stopDetection();
-    startMonitor();
+    startMonitor().then(() => {
+      // If detection was ON, restart it after stream connects
+      if (wasDetecting && state.streaming) {
+        startDetection();
+      }
+    });
   }
 }
 
@@ -1645,6 +1670,12 @@ async function testCameraConnectivity() {
   const btn = $('#btn-test-cameras');
   btn.disabled = true;
   btn.style.opacity = '0.5';
+
+  // Set all to "testing" state
+  $$('.camera-item .cam-status').forEach(dot => {
+    dot.className = 'cam-status testing';
+  });
+
   try {
     const res = await fetch('/api/cameras/test', {
       method: 'POST',
@@ -1652,6 +1683,7 @@ async function testCameraConnectivity() {
       body: JSON.stringify({}),
     });
     const results = await res.json();
+    // Update each camera immediately as results come in
     $$('.camera-item').forEach(el => {
       const ip = el.dataset.ip;
       const dot = el.querySelector('.cam-status');
