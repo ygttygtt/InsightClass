@@ -780,10 +780,10 @@ function renderBatchQueue() {
         rightHtml = `<span class="batch-item-summary">${counts}</span>`;
         rightHtml += `<button class="batch-item-view" data-index="${i}" title="查看结果">查看</button>`;
       } else if (item.status === 'error') {
-        rightHtml = `<span class="batch-item-summary" title="${esc(item.error)}">失败</span>`;
+        rightHtml = `<span class="batch-item-summary" title="${escAttr(item.error)}">失败</span>`;
       }
 
-      div.innerHTML = `<span class="batch-item-name" title="${esc(item.filename)}">${esc(item.filename)}</span>${statusHtml}${rightHtml}`;
+      div.innerHTML = `<span class="batch-item-name" title="${escAttr(item.filename)}">${esc(item.filename)}</span>${statusHtml}${rightHtml}`;
       list.appendChild(div);
     });
 
@@ -803,7 +803,7 @@ function renderBatchQueue() {
     state.batchFiles.forEach((f, i) => {
       const div = document.createElement('div');
       div.className = 'batch-item';
-      div.innerHTML = `<span class="batch-item-name" title="${esc(f.name)}">${esc(f.name)}</span><span class="batch-item-status pending">待处理</span><button class="batch-item-remove" data-index="${i}" title="移除">&times;</button>`;
+      div.innerHTML = `<span class="batch-item-name" title="${escAttr(f.name)}">${esc(f.name)}</span><span class="batch-item-status pending">待处理</span><button class="batch-item-remove" data-index="${i}" title="移除">&times;</button>`;
       list.appendChild(div);
     });
     list.querySelectorAll('.batch-item-remove').forEach(btn => {
@@ -1204,7 +1204,7 @@ function renderFilePanel() {
       </div>
       <button class="file-card-remove" data-id="${entry.id}" title="移除">&times;</button>
       <div class="file-card-info">
-        <div class="file-card-name" title="${esc(entry.name)}">${esc(entry.name)}</div>
+        <div class="file-card-name" title="${escAttr(entry.name)}">${esc(entry.name)}</div>
         <div class="file-card-meta">
           <span>${formatFileSize(entry.size)}</span>
           <span class="file-card-status ${entry.status}">${statusLabels[entry.status] || entry.status}</span>
