@@ -81,6 +81,10 @@
               <label>IP 地址 <span class="required">*</span></label>
               <input type="text" id="cam-ip" placeholder="192.168.1.100">
             </div>
+            <div class="cam-field">
+              <label>别名</label>
+              <input type="text" id="cam-name" placeholder="如：教室A前摄像头">
+            </div>
             <div class="cam-form-row">
               <div class="cam-field">
                 <label>用户名</label>
@@ -118,7 +122,7 @@
     <div class="sidebar-section source-panel" id="panel-image">
       <div class="section-label">图片上传</div>
       <label class="upload-zone" id="image-drop">
-        <input type="file" id="image-input" accept="image/*">
+        <input type="file" id="image-input" accept="image/*" multiple>
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         <span>拖拽或点击选择图片</span>
         <em>支持 JPG / PNG</em>
@@ -129,34 +133,16 @@
     <!-- Video Panel -->
     <div class="sidebar-section source-panel" id="panel-video">
       <div class="section-label">视频上传</div>
-      <label class="upload-zone" id="video-drop">
-        <input type="file" id="video-input" accept="video/*">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        <span>拖拽或点击选择视频</span>
-        <em>支持 MP4 / AVI / MOV</em>
+      <label class="upload-zone upload-zone-sm" id="video-drop">
+        <input type="file" id="video-input" accept="video/*" multiple>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>拖拽或点击上传视频</span>
+        <em>MP4 / AVI / MOV · 选择后即时预览</em>
       </label>
-      <button class="btn-action" id="btn-detect-video" disabled>单视频分析</button>
-      <div class="batch-divider"><span>或</span></div>
-      <label class="upload-zone" id="video-batch-drop">
-        <input type="file" id="video-batch-input" accept="video/*" multiple>
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        <span>批量上传视频</span>
-        <em>可同时选择多个文件</em>
-      </label>
-      <!-- Batch Queue -->
-      <div class="batch-queue hidden" id="batch-queue">
-        <div class="batch-queue-header">
-          <span>待处理列表</span>
-          <span class="batch-queue-count" id="batch-queue-count">0</span>
-        </div>
-        <div class="batch-queue-list" id="batch-queue-list"></div>
-        <div class="batch-actions">
-          <button class="btn-action" id="btn-batch-detect" disabled>批量检测</button>
-          <div class="batch-export-row hidden" id="batch-export-row">
-            <button class="btn-export" id="btn-export-csv" title="导出 CSV">CSV</button>
-            <button class="btn-export" id="btn-export-json" title="导出 JSON">JSON</button>
-          </div>
-        </div>
+      <button class="btn-action" id="btn-export-video" disabled>导出标注视频</button>
+      <div class="batch-export-row hidden" id="batch-export-row">
+        <button class="btn-export" id="btn-export-csv" title="导出 CSV">CSV</button>
+        <button class="btn-export" id="btn-export-json" title="导出 JSON">JSON</button>
       </div>
     </div>
 
@@ -204,6 +190,10 @@
         <button class="btn-ctrl btn-stop" id="btn-stop" disabled title="停止检测">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
           停止
+        </button>
+        <button class="btn-ctrl btn-file-list" id="btn-file-list" title="文件列表" style="display:none">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          文件 <span class="file-count-badge" id="file-count-badge" style="display:none">0</span>
         </button>
       </div>
     </header>
@@ -273,6 +263,26 @@
     </div>
   </div>
 </div>
+
+<!-- File List Panel -->
+<div id="file-panel" class="file-panel">
+  <div class="file-panel-header">
+    <span class="file-panel-title">文件列表 <span class="file-panel-count" id="file-panel-count">0</span></span>
+    <button class="file-panel-close" id="file-panel-close">&times;</button>
+  </div>
+  <div class="file-panel-body" id="file-panel-body">
+    <div class="file-panel-empty">暂无文件</div>
+  </div>
+  <div class="file-panel-footer">
+    <label class="file-select-all-label"><input type="checkbox" id="file-select-all"> 全选</label>
+    <button class="btn-export-selected" id="btn-export-selected" disabled>导出选中 (<span id="export-selected-count">0</span>)</button>
+  </div>
+  <div class="file-export-progress hidden" id="file-export-progress">
+    <div class="file-export-bar"><div class="file-export-bar-fill" id="file-export-bar-fill"></div></div>
+    <div class="file-export-text" id="file-export-text">准备中...</div>
+  </div>
+</div>
+<div class="file-panel-overlay hidden" id="file-panel-overlay"></div>
 
 <script>
 window.DISPLAY_NAMES = {{ display_names | tojson }};

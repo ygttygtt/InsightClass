@@ -433,14 +433,14 @@ async def batch_upload(videos: list[UploadFile] = File(...)):
     batch_id = uuid.uuid4().hex[:12]
     tmp_dir = tempfile.mkdtemp(prefix="ic_batch_")
     items: list[dict] = []
-    for v in videos:
+    for idx, v in enumerate(videos):
         suffix = Path(v.filename).suffix if v.filename else ".mp4"
-        safe_name = Path(v.filename).name if v.filename else f"video{suffix}"
-        tmp_path = Path(tmp_dir) / safe_name
+        display_name = Path(v.filename).name if v.filename else f"video{suffix}"
+        tmp_path = Path(tmp_dir) / f"video_{idx}{suffix}"
         contents = await v.read()
         tmp_path.write_bytes(contents)
         items.append({
-            "filename": safe_name,
+            "filename": display_name,
             "status": "pending",
             "frames": [],
             "frame_count": 0,
@@ -481,13 +481,31 @@ async def batch_detect(
     if weights_path:
         weights_path = _validate_weights_path(weights_path)
 
-    t0 = time.time()
     job["status"] = "processing"
+    job["_weights_path"] = weights_path
+    job["_confidence"] = confidence
+    job["_iou"] = iou
+
+    # Start background processing
+    thread = threading.Thread(target=_batch_detect_worker, args=(job,), daemon=True)
+    thread.start()
+
+    return JSONResponse({"ok": True, "status": "processing"})
+
+
+def _batch_detect_worker(job: dict):
+    """Background worker for batch detection — runs sequentially, updates status per item."""
+    weights_path = job["_weights_path"]
+    confidence = job["_confidence"]
+    iou = job["_iou"]
+
+    t0 = time.time()
     display_names = _load_class_display_names()
     backend = build_backend("ultralytics")
 
-    for item in job["items"]:
+    for i, item in enumerate(job["items"]):
         item["status"] = "processing"
+        item["_index"] = i
         try:
             video_path = item["_path"]
             cap = cv2.VideoCapture(video_path)
@@ -536,8 +554,6 @@ async def batch_detect(
 
     job["status"] = "done"
     job["total_latency_sec"] = round(time.time() - t0, 2)
-
-    return JSONResponse(_batch_response(job))
 
 
 @app.get("/api/detect/batch/{batch_id}")
@@ -659,6 +675,7 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
         for ip in ips:
             cam = {
                 "ip": ip,
+                "name": "",
                 "group": group,
                 "group_label": "前视角" if group == "front" else "后视角",
                 "rtsp_url": _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT),
@@ -673,6 +690,7 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
     for cam in _load_custom_cameras():
         entry = {
             "ip": cam["ip"],
+            "name": cam.get("name", ""),
             "group": cam.get("group", "custom"),
             "group_label": cam.get("note", "自定义") or "自定义",
             "rtsp_url": _build_rtsp_url(cam["ip"], cam.get("username", DEFAULT_RTSP_USERNAME), cam.get("password", DEFAULT_RTSP_PASSWORD), cam.get("port", DEFAULT_RTSP_PORT)),
@@ -703,6 +721,7 @@ async def add_camera(request: Request):
         return JSONResponse({"error": f"Camera {ip} already exists"}, status_code=409)
     cam = {
         "ip": ip,
+        "name": body.get("name", "").strip(),
         "username": body.get("username", DEFAULT_RTSP_USERNAME),
         "password": body.get("password", DEFAULT_RTSP_PASSWORD),
         "port": body.get("port", DEFAULT_RTSP_PORT),
@@ -721,6 +740,7 @@ async def update_camera(ip: str, request: Request):
     if idx is None:
         return JSONResponse({"error": "Camera not found"}, status_code=404)
     cameras[idx].update({
+        "name": body.get("name", cameras[idx].get("name", "")),
         "username": body.get("username", cameras[idx].get("username", DEFAULT_RTSP_USERNAME)),
         "password": body.get("password", cameras[idx].get("password", DEFAULT_RTSP_PASSWORD)),
         "port": body.get("port", cameras[idx].get("port", DEFAULT_RTSP_PORT)),

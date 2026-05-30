@@ -19,12 +19,19 @@ const state = {
   batchId: null,
   batchItems: [],         // Server-side batch item results
   batchProcessing: false,
+  videoBlobUrl: null,    // Current video blob URL for streaming detection
   // Playback modal
   playbackAnimId: null,
   playbackResults: null,
   playbackFps: 30,
   playbackPlaying: false,
+  // File list
+  fileList: [],
+  activeFileId: null,
+  filePanelOpen: false,
 };
+
+let _fileIdCounter = 0;
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -48,9 +55,21 @@ const els = {
   btnStart: $('#btn-start'),
   btnStop: $('#btn-stop'),
   btnDetectImage: $('#btn-detect-image'),
-  btnDetectVideo: $('#btn-detect-video'),
   imageInput: $('#image-input'),
   videoInput: $('#video-input'),
+  btnFileList: $('#btn-file-list'),
+  fileCountBadge: $('#file-count-badge'),
+  filePanel: $('#file-panel'),
+  filePanelBody: $('#file-panel-body'),
+  filePanelCount: $('#file-panel-count'),
+  filePanelClose: $('#file-panel-close'),
+  filePanelOverlay: $('#file-panel-overlay'),
+  btnExportSelected: $('#btn-export-selected'),
+  exportSelectedCount: $('#export-selected-count'),
+  fileSelectAll: $('#file-select-all'),
+  fileExportProgress: $('#file-export-progress'),
+  fileExportBarFill: $('#file-export-bar-fill'),
+  fileExportText: $('#file-export-text'),
 };
 
 // ---- Utility ----
@@ -62,6 +81,12 @@ function formatTime(sec) {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return m + ':' + String(s).padStart(2, '0');
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 // ---- Stats ----
@@ -88,6 +113,12 @@ function updateStats(detections, latencyMs) {
 // ---- Canvas Drawing ----
 function drawDetections(detections, scaleX, scaleY) {
   const ctx = els.ctx;
+  const LINE_W = 2;
+  const FONT_SIZE = 12;
+  const FONT = `600 ${FONT_SIZE}px 'Noto Sans SC', sans-serif`;
+  const PAD = 4;
+  const LABEL_H = FONT_SIZE + PAD * 2;
+
   for (const d of detections) {
     const [x1, y1, x2, y2] = d.xyxy;
     const rx1 = x1 * scaleX, ry1 = y1 * scaleY;
@@ -96,20 +127,18 @@ function drawDetections(detections, scaleX, scaleY) {
     const color = COLORS[d.class_name] || '#888';
 
     ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.035);
+    ctx.lineWidth = LINE_W;
     ctx.strokeRect(rx1, ry1, w, h);
 
     const label = `${d.display_name || d.class_name} ${(d.confidence * 100).toFixed(0)}%`;
-    ctx.font = `500 ${Math.max(11, h * 0.16)}px 'Noto Sans SC', sans-serif`;
+    ctx.font = FONT;
     const tm = ctx.measureText(label);
-    const th = Math.max(14, h * 0.15);
     ctx.fillStyle = color;
-    const pad = 4;
     ctx.beginPath();
-    ctx.roundRect(rx1, ry1 - th - pad * 2, tm.width + pad * 2, th + pad * 2, 3);
+    ctx.roundRect(rx1, ry1 - LABEL_H - PAD, tm.width + PAD * 2, LABEL_H + PAD, 3);
     ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.fillText(label, rx1 + pad, ry1 - pad - 1);
+    ctx.fillText(label, rx1 + PAD, ry1 - PAD - 1);
   }
 }
 
@@ -145,6 +174,7 @@ const SOURCE_LABELS = { rtsp: 'RTSP 监控', webcam: '电脑摄像头', image: '
 
 function switchSource(source) {
   stopAll();
+  closeFilePanel();
   state.source = source;
   els.sourceLabel.textContent = SOURCE_LABELS[source] || source;
 
@@ -154,9 +184,12 @@ function switchSource(source) {
   const showStart = source === 'rtsp' || source === 'webcam';
   els.btnStart.style.display = showStart ? '' : 'none';
   els.btnStop.style.display = showStart ? '' : 'none';
+  els.btnFileList.style.display = showStart ? 'none' : '';
 
   showPlaceholder();
   resetStats();
+  updateExportButton();
+  updateFileCountBadge();
 }
 
 function showPlaceholder() {
@@ -192,28 +225,85 @@ function renderCameraList(cameras) {
     list.innerHTML = '<div class="camera-loading">暂无摄像头，点击 + 添加</div>';
     return;
   }
-  cameras.forEach((cam, i) => {
-    const div = document.createElement('div');
-    div.className = 'camera-item' + (i === 0 ? ' active' : '') + (cam.custom ? ' custom' : '');
-    div.dataset.url = cam.rtsp_url;
-    div.dataset.ip = cam.ip;
-    const statusClass = cam._status || 'unknown';
-    const noteSpan = cam.note ? `<span class="cam-note" title="${esc(cam.note)}">${esc(cam.note)}</span>` : '';
-    const deleteBtn = cam.custom ? `<button class="cam-delete" data-ip="${esc(cam.ip)}" title="删除">&times;</button>` : '';
-    div.innerHTML = `<span class="cam-dot"></span><span class="cam-ip">${esc(cam.ip)}</span>${noteSpan}<span class="cam-group">${esc(cam.group_label)}</span><span class="cam-status ${esc(statusClass)}"></span>${deleteBtn}`;
-    div.addEventListener('click', (e) => {
-      if (e.target.classList.contains('cam-delete')) return;
-      selectCamera(div, cam);
-    });
-    const delBtn = div.querySelector('.cam-delete');
-    if (delBtn) {
-      delBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteCamera(cam.ip);
-      });
+
+  // Group cameras by group field
+  const groupOrder = ['front', 'rear', 'custom'];
+  const groupLabelMap = {};
+  const groups = {};
+  cameras.forEach(cam => {
+    const g = cam.group || 'custom';
+    if (!groups[g]) {
+      groups[g] = [];
+      groupLabelMap[g] = cam.group_label || g;
     }
-    list.appendChild(div);
+    groups[g].push(cam);
   });
+
+  // Sort groups: front, rear, then custom, then any others
+  const sortedGroups = Object.keys(groups).sort((a, b) => {
+    const ai = groupOrder.indexOf(a), bi = groupOrder.indexOf(b);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
+
+  let firstItem = true;
+  sortedGroups.forEach(groupKey => {
+    const cams = groups[groupKey];
+    const label = groupLabelMap[groupKey];
+    const isCollapsed = groupKey === 'custom';
+
+    // Group header
+    const header = document.createElement('div');
+    header.className = 'cam-group-header' + (isCollapsed ? ' collapsed' : '');
+    header.dataset.group = groupKey;
+    header.innerHTML = '<span class="cam-group-toggle">&#9660;</span><span class="cam-group-title">' + esc(label) + '</span><span class="cam-group-count">' + cams.length + '</span>';
+    header.addEventListener('click', () => {
+      header.classList.toggle('collapsed');
+      const items = list.querySelector('.cam-group-items[data-group="' + groupKey + '"]');
+      if (items) items.classList.toggle('collapsed');
+    });
+    list.appendChild(header);
+
+    // Group items container
+    const itemsDiv = document.createElement('div');
+    itemsDiv.className = 'cam-group-items' + (isCollapsed ? ' collapsed' : '');
+    itemsDiv.dataset.group = groupKey;
+
+    cams.forEach(cam => {
+      const div = document.createElement('div');
+      div.className = 'camera-item' + (firstItem ? ' active' : '') + (cam.custom ? ' custom' : '');
+      div.dataset.url = cam.rtsp_url;
+      div.dataset.ip = cam.ip;
+      const statusClass = cam._status || 'unknown';
+      const noteSpan = cam.note ? '<span class="cam-note" title="' + esc(cam.note) + '">' + esc(cam.note) + '</span>' : '';
+      const deleteBtn = cam.custom ? '<button class="cam-delete" data-ip="' + esc(cam.ip) + '" title="删除">&times;</button>' : '';
+
+      // Build name/ip display
+      let infoHtml;
+      if (cam.name) {
+        infoHtml = '<div class="cam-info"><span class="cam-name">' + esc(cam.name) + '</span><span class="cam-ip">' + esc(cam.ip) + '</span></div>';
+      } else {
+        infoHtml = '<div class="cam-info"><span class="cam-ip-only">' + esc(cam.ip) + '</span></div>';
+      }
+
+      div.innerHTML = '<span class="cam-dot"></span>' + infoHtml + noteSpan + '<span class="cam-status ' + esc(statusClass) + '"></span>' + deleteBtn;
+      div.addEventListener('click', (e) => {
+        if (e.target.classList.contains('cam-delete')) return;
+        selectCamera(div, cam);
+      });
+      const delBtn = div.querySelector('.cam-delete');
+      if (delBtn) {
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteCamera(cam.ip);
+        });
+      }
+      itemsDiv.appendChild(div);
+      firstItem = false;
+    });
+
+    list.appendChild(itemsDiv);
+  });
+
   if (cameras.length > 0 && !state.selectedCamera) {
     state.selectedCamera = cameras[0];
   }
@@ -346,6 +436,7 @@ async function startWebcam() {
     state.stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 960 }, height: { ideal: 540 } } });
     els.video.srcObject = state.stream;
     els.video.classList.remove('hidden');
+    els.canvas.classList.remove('hidden');
     hidePlaceholder();
     await els.video.play();
     resizeCanvas();
@@ -393,9 +484,93 @@ async function startWebcam() {
   }
 }
 
+// ---- Video Streaming Detection ----
+function startVideoStream(file) {
+  // Clean up any existing stream
+  if (state.videoBlobUrl) {
+    URL.revokeObjectURL(state.videoBlobUrl);
+    state.videoBlobUrl = null;
+  }
+  stopDetection();
+  if (state.animId) { cancelAnimationFrame(state.animId); state.animId = null; }
+
+  // Create blob URL and set up video with native controls
+  state.videoBlobUrl = URL.createObjectURL(file);
+  els.video.src = state.videoBlobUrl;
+  els.video.controls = true;
+  els.video.playbackRate = 1.0;
+  els.video.classList.remove('hidden');
+  els.canvas.classList.remove('hidden');
+  els.image.classList.add('hidden');
+  hidePlaceholder();
+  resizeCanvas();
+
+  state.detecting = true;
+  resetStats();
+
+  // Detection loop (~500ms interval, captures current video frame)
+  async function detectLoop() {
+    if (!state.detecting) return;
+    if (els.video.paused || els.video.ended || els.video.readyState < 2) {
+      state.detectTimer = setTimeout(detectLoop, 200);
+      return;
+    }
+    try {
+      const offCvs = document.createElement('canvas');
+      offCvs.width = els.video.videoWidth;
+      offCvs.height = els.video.videoHeight;
+      offCvs.getContext('2d').drawImage(els.video, 0, 0, offCvs.width, offCvs.height);
+      const blob = await new Promise(r => offCvs.toBlob(r, 'image/jpeg', 0.8));
+      if (!blob || !state.detecting) return;
+
+      const fd = new FormData();
+      fd.append('image', blob, 'frame.jpg');
+      fd.append('model', getModelPath());
+      fd.append('confidence', getConfidence());
+      fd.append('iou', getIou());
+
+      const res = await fetch('/api/detect/frame', { method: 'POST', body: fd });
+      const data = await res.json();
+      state.lastResults = data.detections || [];
+      updateStats(state.lastResults, data.latency_ms);
+    } catch (e) {
+      console.error('Video stream frame error:', e);
+    }
+    if (state.detecting) state.detectTimer = setTimeout(detectLoop, 500);
+  }
+  detectLoop();
+
+  // Draw loop — only overlay detections, video element handles its own display
+  // Canvas has pointer-events:none so native video controls remain clickable
+  function drawLoop() {
+    if (!state.detecting) return;
+    const cvsW = els.canvas.width, cvsH = els.canvas.height;
+    const vw = els.video.videoWidth, vh = els.video.videoHeight;
+    if (vw && vh) {
+      const scale = Math.min(cvsW / vw, cvsH / vh);
+      const dw = vw * scale, dh = vh * scale;
+      const dx = (cvsW - dw) / 2, dy = (cvsH - dh) / 2;
+      els.ctx.clearRect(0, 0, cvsW, cvsH);
+      if (state.lastResults.length > 0) {
+        els.ctx.save();
+        els.ctx.translate(dx, dy);
+        drawDetections(state.lastResults, dw / vw, dh / vh);
+        els.ctx.restore();
+      }
+    }
+    state.animId = requestAnimationFrame(drawLoop);
+  }
+  state.animId = requestAnimationFrame(drawLoop);
+}
+
 // ---- Image Detection ----
 async function detectImage() {
-  const file = els.imageInput.files[0];
+  let file = null;
+  if (state.activeFileId) {
+    const entry = state.fileList.find(f => f.id === state.activeFileId);
+    if (entry && entry.type === 'image') file = entry.file;
+  }
+  if (!file && els.imageInput.files[0]) file = els.imageInput.files[0];
   if (!file) return;
 
   els.loading.classList.remove('hidden');
@@ -432,63 +607,6 @@ async function detectImage() {
   }
 }
 
-// ---- Video Detection (single) ----
-async function detectVideo() {
-  const file = els.videoInput.files[0];
-  if (!file) return;
-
-  els.loading.classList.remove('hidden');
-  els.loadingText.textContent = '正在上传并分析视频...';
-  els.btnDetectVideo.disabled = true;
-
-  try {
-    const fd = new FormData();
-    fd.append('video', file);
-    fd.append('model', getModelPath());
-    fd.append('confidence', getConfidence());
-    fd.append('iou', getIou());
-
-    const res = await fetch('/api/detect/upload', { method: 'POST', body: fd });
-    if (!res.ok) throw new Error(`服务器返回 ${res.status}`);
-    const data = await res.json();
-
-    state.uploadResults = data;
-    state.uploadFps = data.fps || 30;
-    state.mode = 'upload';
-    resetStats();
-
-    const url = URL.createObjectURL(file);
-    els.video.src = url;
-    els.video.classList.remove('hidden');
-    els.image.classList.add('hidden');
-    hidePlaceholder();
-    els.loading.classList.add('hidden');
-    els.btnDetectVideo.disabled = false;
-    resizeCanvas();
-
-    let drawPending = false;
-    els.video.ontimeupdate = function () {
-      if (drawPending) return;
-      drawPending = true;
-      requestAnimationFrame(() => {
-        drawPending = false;
-        if (state.mode !== 'upload' || !state.uploadResults) return;
-        const frameIdx = Math.round(els.video.currentTime * state.uploadFps);
-        if (frameIdx < 0 || frameIdx >= state.uploadResults.frames.length) return;
-        const frameData = state.uploadResults.frames[frameIdx];
-        drawFrame(els.video, frameData.detections);
-        updateStats(frameData.detections, undefined);
-      });
-    };
-    els.video.play();
-  } catch (e) {
-    console.error('Video detection error:', e);
-    alert('视频分析失败: ' + e.message);
-    els.loading.classList.add('hidden');
-    els.btnDetectVideo.disabled = false;
-  }
-}
-
 // ---- Stop ----
 function stopAll() {
   stopDetection();
@@ -499,8 +617,13 @@ function stopAll() {
     state.stream = null;
   }
   fetch('/api/stream/stop', { method: 'POST' }).catch(() => {});
+  if (state.videoBlobUrl) {
+    URL.revokeObjectURL(state.videoBlobUrl);
+    state.videoBlobUrl = null;
+  }
   els.video.srcObject = null;
   els.video.src = '';
+  els.video.controls = false;
   els.video.classList.add('hidden');
   els.video.ontimeupdate = null;
   els.image.src = '';
@@ -511,7 +634,7 @@ function stopAll() {
 }
 
 // ============================================================
-// ---- Batch Video Detection ----
+// ---- Unified Video Queue ----
 // ============================================================
 
 function batchAddFiles(files) {
@@ -520,20 +643,54 @@ function batchAddFiles(files) {
       state.batchFiles.push(f);
     }
   }
+  // Reset batch state when adding new files
+  if (state.batchId) {
+    state.batchId = null;
+    state.batchItems = [];
+  }
   renderBatchQueue();
 }
 
 function batchRemoveFile(index) {
   state.batchFiles.splice(index, 1);
+  if (state.batchFiles.length === 0) {
+    state.batchId = null;
+    state.batchItems = [];
+  }
   renderBatchQueue();
 }
 
+function updateExportButton() {
+  const btn = $('#btn-export-video');
+  if (!btn) return;
+  if (state.batchProcessing) {
+    const doneCount = (state.batchItems || []).filter(it => it.status === 'done' || it.status === 'error').length;
+    const totalCount = (state.batchItems || []).length || state.batchFiles.length;
+    btn.textContent = totalCount > 0 ? `导出中 ${doneCount}/${totalCount}...` : '导出中...';
+    btn.disabled = true;
+  } else if (state.batchId && state.batchItems && state.batchItems.length > 0) {
+    const anyDone = state.batchItems.some(it => it.status === 'done');
+    btn.textContent = anyDone ? '导出完成' : '导出标注视频';
+    btn.disabled = false;
+    const exportRow = $('#batch-export-row');
+    if (exportRow) exportRow.classList.toggle('hidden', !anyDone);
+  } else {
+    btn.textContent = '导出标注视频';
+    btn.disabled = state.batchFiles.length === 0;
+  }
+}
+
 function renderBatchQueue() {
+  updateExportButton();
   const queue = $('#batch-queue');
+  if (!queue) return;
   const list = $('#batch-queue-list');
   const countEl = $('#batch-queue-count');
   const btnDetect = $('#btn-batch-detect');
   const exportRow = $('#batch-export-row');
+  const totalProg = $('#batch-total-progress');
+  const totalFill = $('#batch-total-bar-fill');
+  const totalText = $('#batch-total-text');
 
   if (state.batchFiles.length === 0 && !state.batchId) {
     queue.classList.add('hidden');
@@ -541,21 +698,34 @@ function renderBatchQueue() {
   }
   queue.classList.remove('hidden');
 
-  // Use server items if batch has been submitted, otherwise local files
   const hasResults = state.batchId && state.batchItems.length > 0;
 
   if (hasResults) {
     countEl.textContent = state.batchItems.length;
     list.innerHTML = '';
+
+    // Total progress bar
+    const doneCount = state.batchItems.filter(it => it.status === 'done' || it.status === 'error').length;
+    const totalCount = state.batchItems.length;
+    const pct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+    if (state.batchProcessing) {
+      totalProg.classList.remove('hidden');
+      totalFill.style.width = pct + '%';
+      totalText.textContent = `${doneCount} / ${totalCount} 已完成`;
+    } else {
+      totalProg.classList.add('hidden');
+    }
+
     state.batchItems.forEach((item, i) => {
       const div = document.createElement('div');
-      div.className = 'batch-item';
+      div.className = 'batch-item' + (item.status === 'processing' ? ' processing-current' : '');
 
       let statusHtml = `<span class="batch-item-status ${esc(item.status)}">${statusLabel(item.status)}</span>`;
       let rightHtml = '';
 
       if (item.status === 'processing') {
-        rightHtml = `<div class="batch-item-progress"><div class="batch-item-progress-bar" style="width: 50%"></div></div>`;
+        rightHtml = `<div class="batch-item-progress"><div class="batch-item-progress-bar" style="width:60%"></div></div>`;
       } else if (item.status === 'done') {
         const counts = buildBatchCountsHtml(item.detection_summary);
         rightHtml = `<span class="batch-item-summary">${counts}</span>`;
@@ -568,19 +738,19 @@ function renderBatchQueue() {
       list.appendChild(div);
     });
 
-    // Wire up view buttons
     list.querySelectorAll('.batch-item-view').forEach(btn => {
       btn.addEventListener('click', () => openPlaybackModal(parseInt(btn.dataset.index)));
     });
 
-    // Show export if any items are done
     const anyDone = state.batchItems.some(it => it.status === 'done');
     exportRow.classList.toggle('hidden', !anyDone);
-    btnDetect.disabled = true;
-    btnDetect.textContent = state.batchProcessing ? '检测中...' : '批量检测';
+    btnDetect.disabled = state.batchProcessing;
+    btnDetect.textContent = state.batchProcessing ? `检测中 ${doneCount}/${totalCount}...` : '重新检测';
   } else {
+    // Show local files waiting to be submitted
     countEl.textContent = state.batchFiles.length;
     list.innerHTML = '';
+    totalProg.classList.add('hidden');
     state.batchFiles.forEach((f, i) => {
       const div = document.createElement('div');
       div.className = 'batch-item';
@@ -591,7 +761,7 @@ function renderBatchQueue() {
       btn.addEventListener('click', () => batchRemoveFile(parseInt(btn.dataset.index)));
     });
     btnDetect.disabled = state.batchFiles.length === 0 || state.batchProcessing;
-    btnDetect.textContent = '批量检测';
+    btnDetect.textContent = '开始检测';
     exportRow.classList.add('hidden');
   }
 }
@@ -617,13 +787,8 @@ async function batchDetect() {
   state.batchProcessing = true;
   renderBatchQueue();
 
-  const loading = els.loading;
-  const loadingText = els.loadingText;
-  loading.classList.remove('hidden');
-
   try {
     // Step 1: Upload all files
-    loadingText.textContent = `正在上传 ${state.batchFiles.length} 个视频...`;
     const fd = new FormData();
     state.batchFiles.forEach(f => fd.append('videos', f));
     const uploadRes = await fetch('/api/detect/batch-upload', { method: 'POST', body: fd });
@@ -631,26 +796,43 @@ async function batchDetect() {
     const uploadData = await uploadRes.json();
     state.batchId = uploadData.batch_id;
 
-    // Step 2: Start detection
-    loadingText.textContent = '正在批量检测...';
+    // Initialize items as pending
+    state.batchItems = state.batchFiles.map(f => ({
+      filename: f.name, status: 'pending', detection_summary: {}, error: ''
+    }));
+    renderBatchQueue();
+
+    // Step 2: Start detection (non-blocking)
     const detectFd = new FormData();
     detectFd.append('model', getModelPath());
     detectFd.append('confidence', getConfidence());
     detectFd.append('iou', getIou());
-    const detectRes = await fetch(`/api/detect/batch/${state.batchId}`, { method: 'POST', body: detectFd });
-    if (!detectRes.ok) throw new Error(`检测失败: ${detectRes.status}`);
-    const resultData = await detectRes.json();
+    fetch(`/api/detect/batch/${state.batchId}`, { method: 'POST', body: detectFd }).catch(() => {});
 
-    state.batchItems = resultData.items || [];
-    loading.classList.add('hidden');
+    // Step 3: Poll for progress
+    await batchPollProgress();
   } catch (e) {
     console.error('Batch detection error:', e);
     alert('批量检测失败: ' + e.message);
-    loading.classList.add('hidden');
   }
 
   state.batchProcessing = false;
   renderBatchQueue();
+}
+
+async function batchPollProgress() {
+  while (state.batchProcessing) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const res = await fetch(`/api/detect/batch/${state.batchId}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      state.batchItems = data.items || [];
+      renderBatchQueue();
+
+      if (data.status === 'done') break;
+    } catch (e) { /* ignore */ }
+  }
 }
 
 async function batchExport(format) {
@@ -806,6 +988,12 @@ function startPlaybackLoop() {
 }
 
 function drawPlaybackDetections(ctx, detections, scaleX, scaleY) {
+  const LINE_W = 2;
+  const FONT_SIZE = 12;
+  const FONT = `600 ${FONT_SIZE}px 'Noto Sans SC', sans-serif`;
+  const PAD = 4;
+  const LABEL_H = FONT_SIZE + PAD * 2;
+
   for (const d of detections) {
     const [x1, y1, x2, y2] = d.xyxy;
     const rx1 = x1 * scaleX, ry1 = y1 * scaleY;
@@ -814,21 +1002,283 @@ function drawPlaybackDetections(ctx, detections, scaleX, scaleY) {
     const color = COLORS[d.class_name] || '#888';
 
     ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.035);
+    ctx.lineWidth = LINE_W;
     ctx.strokeRect(rx1, ry1, w, h);
 
     const label = `${d.display_name || d.class_name} ${(d.confidence * 100).toFixed(0)}%`;
-    ctx.font = `500 ${Math.max(11, h * 0.16)}px 'Noto Sans SC', sans-serif`;
+    ctx.font = FONT;
     const tm = ctx.measureText(label);
-    const th = Math.max(14, h * 0.15);
     ctx.fillStyle = color;
-    const pad = 4;
     ctx.beginPath();
-    ctx.roundRect(rx1, ry1 - th - pad * 2, tm.width + pad * 2, th + pad * 2, 3);
+    ctx.roundRect(rx1, ry1 - LABEL_H - PAD, tm.width + PAD * 2, LABEL_H + PAD, 3);
     ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.fillText(label, rx1 + pad, ry1 - pad - 1);
+    ctx.fillText(label, rx1 + PAD, ry1 - PAD - 1);
   }
+}
+
+// ============================================================
+// ---- File List Panel ----
+// ============================================================
+
+async function generateThumbnail(file) {
+  if (file.type.startsWith('image/')) {
+    return URL.createObjectURL(file);
+  }
+  if (file.type.startsWith('video/')) {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.src = URL.createObjectURL(file);
+      video.onloadeddata = () => {
+        video.currentTime = Math.min(1, video.duration * 0.1);
+      };
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 160;
+        canvas.height = 90;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(video.src);
+          resolve(blob ? URL.createObjectURL(blob) : '');
+        }, 'image/jpeg', 0.7);
+      };
+      video.onerror = () => {
+        URL.revokeObjectURL(video.src);
+        resolve('');
+      };
+    });
+  }
+  return '';
+}
+
+async function addFilesToList(fileInput) {
+  const newEntries = [];
+  for (const file of fileInput) {
+    const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;
+    if (!type) continue;
+    const id = ++_fileIdCounter;
+    const entry = { id, file, type, name: file.name, size: file.size, thumbnailUrl: '', status: 'pending', selected: false };
+    state.fileList.push(entry);
+    newEntries.push(entry);
+  }
+  // Generate thumbnails async
+  for (const entry of newEntries) {
+    generateThumbnail(entry.file).then(url => {
+      entry.thumbnailUrl = url;
+      renderFilePanel();
+    });
+  }
+  updateFileCountBadge();
+  renderFilePanel();
+  // Auto-preview first new file
+  if (newEntries.length > 0) {
+    previewFile(newEntries[0]);
+  }
+}
+
+async function previewFile(entry) {
+  state.activeFileId = entry.id;
+  renderFilePanel();
+  const file = entry.file;
+  if (entry.type === 'image') {
+    els.loading.classList.remove('hidden');
+    els.loadingText.textContent = '正在分析图片...';
+    try {
+      const fd = new FormData();
+      fd.append('image', file);
+      fd.append('model', getModelPath());
+      fd.append('confidence', getConfidence());
+      fd.append('iou', getIou());
+      const res = await fetch('/api/detect/frame', { method: 'POST', body: fd });
+      const data = await res.json();
+      state.lastResults = data.detections || [];
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        hidePlaceholder();
+        els.video.classList.add('hidden');
+        els.image.classList.add('hidden');
+        els.canvas.classList.remove('hidden');
+        els.canvas.width = els.canvas.parentElement.clientWidth;
+        els.canvas.height = els.canvas.parentElement.clientHeight;
+        drawFrame(img, state.lastResults);
+        updateStats(state.lastResults, data.latency_ms);
+        els.loading.classList.add('hidden');
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    } catch (e) {
+      console.error('Image detection error:', e);
+      els.loading.classList.add('hidden');
+    }
+  } else if (entry.type === 'video') {
+    startVideoStream(file);
+  }
+}
+
+function renderFilePanel() {
+  const body = els.filePanelBody;
+  const countEl = els.filePanelCount;
+  const list = state.fileList;
+  countEl.textContent = list.length;
+
+  if (list.length === 0) {
+    body.innerHTML = '<div class="file-panel-empty">暂无文件</div>';
+    updateExportSelectedBtn();
+    return;
+  }
+
+  const statusLabels = { pending: '待处理', detecting: '检测中', done: '已完成', error: '失败' };
+  let html = '<div class="file-grid">';
+  for (const entry of list) {
+    const activeClass = entry.id === state.activeFileId ? ' active' : '';
+    const thumbHtml = entry.thumbnailUrl
+      ? `<img src="${esc(entry.thumbnailUrl)}" alt="">`
+      : '<span class="file-thumb-placeholder">加载中...</span>';
+    html += `<div class="file-card${activeClass}" data-id="${entry.id}">
+      <div class="file-card-thumb">
+        <input type="checkbox" class="file-card-checkbox" data-id="${entry.id}" ${entry.selected ? 'checked' : ''}>
+        ${thumbHtml}
+        <span class="file-card-type-badge">${entry.type === 'video' ? '视频' : '图片'}</span>
+      </div>
+      <div class="file-card-info">
+        <div class="file-card-name" title="${esc(entry.name)}">${esc(entry.name)}</div>
+        <div class="file-card-meta">
+          <span>${formatFileSize(entry.size)}</span>
+          <span class="file-card-status ${entry.status}">${statusLabels[entry.status] || entry.status}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  body.innerHTML = html;
+
+  // Bind click events
+  body.querySelectorAll('.file-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.classList.contains('file-card-checkbox')) return;
+      const id = parseInt(card.dataset.id);
+      const entry = state.fileList.find(f => f.id === id);
+      if (entry) previewFile(entry);
+    });
+  });
+  body.querySelectorAll('.file-card-checkbox').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      const id = parseInt(cb.dataset.id);
+      const entry = state.fileList.find(f => f.id === id);
+      if (entry) entry.selected = cb.checked;
+      updateExportSelectedBtn();
+    });
+  });
+
+  updateExportSelectedBtn();
+}
+
+function updateFileCountBadge() {
+  const count = state.fileList.length;
+  els.fileCountBadge.textContent = count;
+  els.fileCountBadge.style.display = count > 0 ? '' : 'none';
+}
+
+function updateExportSelectedBtn() {
+  const selectedCount = state.fileList.filter(f => f.selected).length;
+  els.exportSelectedCount.textContent = selectedCount;
+  els.btnExportSelected.disabled = selectedCount === 0;
+}
+
+function toggleFilePanel() {
+  state.filePanelOpen = !state.filePanelOpen;
+  els.filePanel.classList.toggle('open', state.filePanelOpen);
+  els.filePanelOverlay.classList.toggle('hidden', !state.filePanelOpen);
+  if (state.filePanelOpen) renderFilePanel();
+}
+
+function closeFilePanel() {
+  state.filePanelOpen = false;
+  els.filePanel.classList.remove('open');
+  els.filePanelOverlay.classList.add('hidden');
+}
+
+async function exportSelected() {
+  const selected = state.fileList.filter(f => f.selected);
+  if (selected.length === 0) return;
+
+  els.fileExportProgress.classList.remove('hidden');
+  els.btnExportSelected.disabled = true;
+  const results = [];
+
+  for (let i = 0; i < selected.length; i++) {
+    const entry = selected[i];
+    entry.status = 'detecting';
+    renderFilePanel();
+
+    els.fileExportText.textContent = `正在处理 ${i + 1}/${selected.length}: ${entry.name}...`;
+    els.fileExportBarFill.style.width = `${(i / selected.length) * 100}%`;
+
+    try {
+      if (entry.type === 'image') {
+        const fd = new FormData();
+        fd.append('image', entry.file);
+        fd.append('model', getModelPath());
+        fd.append('confidence', getConfidence());
+        fd.append('iou', getIou());
+        const res = await fetch('/api/detect/frame', { method: 'POST', body: fd });
+        const data = await res.json();
+        const dets = data.detections || [];
+        results.push({ filename: entry.name, type: 'image', detections: dets });
+        entry.status = 'done';
+      } else {
+        const fd = new FormData();
+        fd.append('video', entry.file);
+        fd.append('model', getModelPath());
+        fd.append('confidence', getConfidence());
+        fd.append('iou', getIou());
+        const res = await fetch('/api/detect/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        const allDets = (data.frames || []).flatMap(f => f.detections || []);
+        results.push({ filename: entry.name, type: 'video', frame_count: data.frame_count, detections: allDets });
+        entry.status = 'done';
+      }
+    } catch (e) {
+      entry.status = 'error';
+      results.push({ filename: entry.name, type: entry.type, error: e.message, detections: [] });
+    }
+    renderFilePanel();
+  }
+
+  els.fileExportBarFill.style.width = '100%';
+  els.fileExportText.textContent = '导出完成！正在下载...';
+
+  downloadResults(results);
+  updateExportSelectedBtn();
+
+  setTimeout(() => {
+    els.fileExportProgress.classList.add('hidden');
+  }, 2000);
+}
+
+function downloadResults(results) {
+  let csv = '﻿filename,type,class_name,display_name,confidence,x1,y1,x2,y2\n';
+  for (const r of results) {
+    for (const d of (r.detections || [])) {
+      const x1 = d.xyxy[0].toFixed(1), y1 = d.xyxy[1].toFixed(1);
+      const x2 = d.xyxy[2].toFixed(1), y2 = d.xyxy[3].toFixed(1);
+      csv += `"${r.filename}",${r.type},${d.class_name},"${d.display_name || d.class_name}",${d.confidence},${x1},${y1},${x2},${y2}\n`;
+    }
+  }
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `detections_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ---- Event Listeners ----
@@ -853,13 +1303,25 @@ els.btnStop.addEventListener('click', () => {
 });
 
 els.btnDetectImage.addEventListener('click', detectImage);
-els.btnDetectVideo.addEventListener('click', detectVideo);
 
 els.imageInput.addEventListener('change', () => {
-  els.btnDetectImage.disabled = !els.imageInput.files[0];
+  if (els.imageInput.files.length > 0) {
+    addFilesToList(els.imageInput.files);
+    els.btnDetectImage.disabled = false;
+    els.imageInput.value = '';
+  }
 });
 els.videoInput.addEventListener('change', () => {
-  els.btnDetectVideo.disabled = !els.videoInput.files[0];
+  if (els.videoInput.files.length > 0) {
+    // Store files for batch export
+    state.batchFiles = [];
+    for (const f of els.videoInput.files) {
+      if (f.type.startsWith('video/')) state.batchFiles.push(f);
+    }
+    if (state.batchId) { state.batchId = null; state.batchItems = []; }
+    addFilesToList(els.videoInput.files);
+    els.videoInput.value = '';
+  }
 });
 
 els.confidence.addEventListener('input', () => {
@@ -888,34 +1350,11 @@ window.addEventListener('resize', resizeCanvas);
   });
 });
 
-// ---- Batch Drag & Drop ----
-const batchZone = document.getElementById('video-batch-drop');
-if (batchZone) {
-  batchZone.addEventListener('dragover', e => { e.preventDefault(); batchZone.style.borderColor = 'var(--accent)'; });
-  batchZone.addEventListener('dragleave', () => { batchZone.style.borderColor = ''; });
-  batchZone.addEventListener('drop', e => {
-    e.preventDefault();
-    batchZone.style.borderColor = '';
-    if (e.dataTransfer.files.length > 0) {
-      batchAddFiles(e.dataTransfer.files);
-    }
-  });
-}
-
 // ---- Batch Events ----
-const batchInput = $('#video-batch-input');
-if (batchInput) {
-  batchInput.addEventListener('change', () => {
-    if (batchInput.files.length > 0) {
-      batchAddFiles(batchInput.files);
-      batchInput.value = '';
-    }
-  });
-}
 
-const btnBatchDetect = $('#btn-batch-detect');
-if (btnBatchDetect) {
-  btnBatchDetect.addEventListener('click', batchDetect);
+const btnExportVideo = $('#btn-export-video');
+if (btnExportVideo) {
+  btnExportVideo.addEventListener('click', batchDetect);
 }
 
 const btnExportCsv = $('#btn-export-csv');
@@ -995,6 +1434,7 @@ $('#btn-set-default').addEventListener('click', async () => {
 function showCameraForm() {
   $('#cam-form-wrapper').classList.remove('hidden');
   $('#cam-ip').value = '';
+  $('#cam-name').value = '';
   $('#cam-username').value = '';
   $('#cam-password').value = '';
   $('#cam-port').value = '554';
@@ -1011,6 +1451,7 @@ async function saveCameraForm() {
   if (!ip) { alert('请输入 IP 地址'); return; }
   const body = {
     ip,
+    name: $('#cam-name').value.trim(),
     username: $('#cam-username').value.trim() || 'admin',
     password: $('#cam-password').value.trim() || '',
     port: parseInt($('#cam-port').value) || 554,
@@ -1078,6 +1519,17 @@ $('#cam-form-save').addEventListener('click', saveCameraForm);
 $('#cam-form-wrapper').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') saveCameraForm();
   if (e.key === 'Escape') hideCameraForm();
+});
+
+// ---- File Panel Events ----
+els.btnFileList.addEventListener('click', toggleFilePanel);
+els.filePanelClose.addEventListener('click', closeFilePanel);
+els.filePanelOverlay.addEventListener('click', closeFilePanel);
+els.btnExportSelected.addEventListener('click', exportSelected);
+els.fileSelectAll.addEventListener('change', () => {
+  const checked = els.fileSelectAll.checked;
+  state.fileList.forEach(f => f.selected = checked);
+  renderFilePanel();
 });
 
 // ---- Init ----
