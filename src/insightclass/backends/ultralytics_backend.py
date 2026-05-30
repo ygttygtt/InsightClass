@@ -216,11 +216,15 @@ class UltralyticsBackend(DetectorBackend):
     @staticmethod
     def _find_run_dir(project_dir: Path, run_name: str) -> Path:
         """Find the actual run directory, handling ultralytics suffix like 'run_name-2'."""
+        import re
         exact = project_dir / run_name
         if exact.exists():
             return exact
-        # ultralytics appends -N suffix when directory already exists
-        candidates = sorted(project_dir.glob(f"{run_name}-*"), key=lambda p: p.stat().st_mtime)
+        pattern = re.compile(r"^" + re.escape(run_name) + r"-\d+$")
+        candidates = sorted(
+            [p for p in project_dir.iterdir() if p.is_dir() and pattern.match(p.name)],
+            key=lambda p: p.stat().st_mtime,
+        )
         if candidates:
             return candidates[-1]
         raise FileNotFoundError(f"Training run directory not found under {project_dir} for '{run_name}'")

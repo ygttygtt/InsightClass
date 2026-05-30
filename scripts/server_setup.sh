@@ -3,7 +3,7 @@
 # InsightClass 服务器一键环境配置脚本
 # 用法: bash scripts/server_setup.sh
 # ============================================================
-set -e
+set -euo pipefail
 
 # 切到项目根目录（脚本所在目录的上一级）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

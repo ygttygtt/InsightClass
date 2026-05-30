@@ -3,87 +3,180 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>InsightClass - 课堂行为检测</title>
+<title>InsightClass 深见课堂</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<header class="toolbar">
-  <h1>InsightClass <span class="subtitle">课堂行为检测</span></h1>
-  <div class="controls">
-    <label class="control-group">
-      <span>模型</span>
-      <select id="model-select">
-        {% for exp in experiments %}
-        <option value="{{ exp.weights_path }}" {% if loop.first %}selected{% endif %}>
-          {{ exp.experiment_id }}
-          {% if exp.metrics and exp.metrics.get('mAP50_95') is not none %}
-            (mAP: {{ "%.3f"|format(exp.metrics['mAP50_95']) }})
-          {% endif %}
-        </option>
-        {% endfor %}
-      </select>
-    </label>
-    <label class="control-group">
-      <span>置信度 <em id="conf-val">{{ default_confidence }}</em></span>
-      <input type="range" id="confidence" min="0.05" max="0.95" step="0.05" value="{{ default_confidence }}">
-    </label>
-    <label class="control-group">
-      <span>IoU <em id="iou-val">{{ default_iou }}</em></span>
-      <input type="range" id="iou" min="0.1" max="0.9" step="0.05" value="{{ default_iou }}">
-    </label>
-  </div>
-</header>
-
-<div class="main">
-  <div class="viewer">
-    <div class="tabs">
-      <button class="tab active" data-tab="camera">摄像头检测</button>
-      <button class="tab" data-tab="upload">视频上传</button>
-    </div>
-
-    <div class="canvas-wrap">
-      <video id="source-video" autoplay playsinline muted></video>
-      <canvas id="overlay-canvas"></canvas>
-      <div id="placeholder" class="placeholder">
-        <p>点击「开始检测」启动摄像头，或切换到「视频上传」选择文件</p>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+          <rect width="32" height="32" rx="8" fill="url(#brand-grad)"/>
+          <path d="M8 16C8 11.58 11.58 8 16 8s8 3.58 8 8-3.58 8-8 8" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="16" cy="16" r="3" fill="#fff"/>
+          <path d="M16 10v-2M16 24v-2M10 16H8M24 16h-2" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity=".6"/>
+          <defs><linearGradient id="brand-grad" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs>
+        </svg>
       </div>
-      <div id="loading" class="loading hidden">
-        <div class="spinner"></div>
-        <p id="loading-text">正在处理...</p>
+      <div class="brand-text">
+        <span class="brand-name">InsightClass</span>
+        <span class="brand-sub">深见课堂</span>
       </div>
     </div>
 
-    <div class="actions">
-      <div class="tab-content" id="tab-camera">
-        <button id="btn-start-camera" class="btn primary">开始检测</button>
-        <button id="btn-stop-camera" class="btn" disabled>停止检测</button>
-      </div>
-      <div class="tab-content hidden" id="tab-upload">
-        <input type="file" id="file-input" accept="video/*">
-        <button id="btn-upload" class="btn primary">开始分析</button>
-      </div>
+    <div class="sidebar-section">
+      <div class="section-label">检测源</div>
+      <nav class="source-nav">
+        <button class="source-btn active" data-source="rtsp">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <span>RTSP 监控</span>
+          <em>主功能</em>
+        </button>
+        <button class="source-btn" data-source="webcam">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+          <span>电脑摄像头</span>
+        </button>
+        <button class="source-btn" data-source="image">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <span>图片检测</span>
+        </button>
+        <button class="source-btn" data-source="video">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>视频检测</span>
+        </button>
+      </nav>
     </div>
-  </div>
 
-  <aside class="stats-panel">
-    <h2>检测统计</h2>
-    <div class="stat-cards" id="stat-cards">
-      {% for name, display in display_names.items() %}
-      <div class="stat-card" data-class="{{ name }}">
-        <div class="stat-color" style="background: {{ {'phone_use': '#ef4444', 'talking': '#3b82f6', 'sleeping': '#eab308', 'standing': '#22c55e'}.get(name, '#888') }}"></div>
-        <div class="stat-info">
-          <span class="stat-label">{{ display }}</span>
-          <span class="stat-count" id="count-{{ name }}">0</span>
-        </div>
+    <!-- RTSP Camera List -->
+    <div class="sidebar-section source-panel active" id="panel-rtsp">
+      <div class="section-label">摄像头列表</div>
+      <div class="camera-list" id="camera-list">
+        <div class="camera-loading">加载中...</div>
       </div>
-      {% endfor %}
     </div>
-    <div class="perf-info">
-      <div><span>检测延迟</span><span id="latency">-- ms</span></div>
-      <div><span>检测帧数</span><span id="frame-count">0</span></div>
+
+    <!-- Webcam Panel -->
+    <div class="sidebar-section source-panel" id="panel-webcam">
+      <div class="section-label">电脑摄像头</div>
+      <p class="panel-hint">点击右侧「开始检测」启动笔记本摄像头</p>
+    </div>
+
+    <!-- Image Panel -->
+    <div class="sidebar-section source-panel" id="panel-image">
+      <div class="section-label">图片上传</div>
+      <label class="upload-zone" id="image-drop">
+        <input type="file" id="image-input" accept="image/*">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>拖拽或点击选择图片</span>
+        <em>支持 JPG / PNG</em>
+      </label>
+      <button class="btn-action" id="btn-detect-image" disabled>开始检测</button>
+    </div>
+
+    <!-- Video Panel -->
+    <div class="sidebar-section source-panel" id="panel-video">
+      <div class="section-label">视频上传</div>
+      <label class="upload-zone" id="video-drop">
+        <input type="file" id="video-input" accept="video/*">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>拖拽或点击选择视频</span>
+        <em>支持 MP4 / AVI / MOV</em>
+      </label>
+      <button class="btn-action" id="btn-detect-video" disabled>开始分析</button>
+    </div>
+
+    <!-- Model & Params -->
+    <div class="sidebar-section params-section">
+      <div class="section-label">模型与参数</div>
+      <div class="param-row">
+        <label>模型</label>
+        <select id="model-select">
+          {% for exp in experiments %}
+          <option value="{{ exp.weights_path }}" {% if loop.first %}selected{% endif %}>
+            {{ exp.experiment_id }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="param-row">
+        <label>置信度 <em id="conf-val">{{ default_confidence }}</em></label>
+        <input type="range" id="confidence" min="0.05" max="0.95" step="0.05" value="{{ default_confidence }}">
+      </div>
+      <div class="param-row">
+        <label>IoU <em id="iou-val">{{ default_iou }}</em></label>
+        <input type="range" id="iou" min="0.1" max="0.9" step="0.05" value="{{ default_iou }}">
+      </div>
     </div>
   </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1>实时检测</h1>
+        <span class="header-badge" id="source-label">RTSP 监控</span>
+      </div>
+      <div class="header-actions">
+        <button class="btn-ctrl btn-start" id="btn-start" title="开始检测">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
+          开始
+        </button>
+        <button class="btn-ctrl btn-stop" id="btn-stop" disabled title="停止检测">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          停止
+        </button>
+      </div>
+    </header>
+
+    <!-- Viewer -->
+    <div class="viewer">
+      <div class="canvas-wrap">
+        <video id="source-video" autoplay playsinline muted></video>
+        <img id="source-image" class="hidden" alt="">
+        <canvas id="overlay-canvas"></canvas>
+        <div id="placeholder" class="placeholder">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity=".3">
+            <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+          </svg>
+          <p>选择左侧检测源，点击「开始」启动实时检测</p>
+        </div>
+        <div id="loading" class="loading hidden">
+          <div class="spinner"></div>
+          <p id="loading-text">正在处理...</p>
+        </div>
+      </div>
+
+      <!-- Stats Bar -->
+      <div class="stats-bar">
+        <div class="stats-left">
+          {% for name, display in display_names.items() %}
+          <div class="stat-chip" data-class="{{ name }}">
+            <span class="stat-dot" style="background: {{ {'phone_use': '#ef4444', 'talking': '#3b82f6', 'sleeping': '#eab308'}.get(name, '#888') }}"></span>
+            <span class="stat-name">{{ display }}</span>
+            <span class="stat-num" id="count-{{ name }}">0</span>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="stats-right">
+          <div class="stat-metric">
+            <span class="metric-label">延迟</span>
+            <span class="metric-val" id="latency">--</span>
+          </div>
+          <div class="stat-metric">
+            <span class="metric-label">帧数</span>
+            <span class="metric-val" id="frame-count">0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
 </div>
 
 <script>

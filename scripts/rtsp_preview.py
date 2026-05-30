@@ -1,18 +1,18 @@
-"""RTSP 摄像头实时预览脚本（Hikvision DS-2CD3T35-I3）
+"""RTSP 摄像头实时预览脚本
 
 用法:
     python scripts/rtsp_preview.py              # 交互式选择摄像头
-    python scripts/rtsp_preview.py 10.8.14.36   # 直接指定 IP
+    python scripts/rtsp_preview.py 10.8.14.34   # 直接指定 IP
+    python scripts/rtsp_preview.py 10.8.14.34 --sub  # 用子码流(102)
 """
 
 import cv2
+import os
 import sys
 
-# 摄像头配置
 USERNAME = "admin"
 PASSWORD = "1000phone"
 PORT = 554
-RTSP_PATH = "/Streaming/Channels/101"
 
 CAMERA_IPS = {
     "前视角": [
@@ -25,9 +25,10 @@ CAMERA_IPS = {
     ],
 }
 
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+
 
 def pick_camera() -> str:
-    """交互式选择摄像头 IP。"""
     all_ips = []
     print("\n可用摄像头：")
     for group, ips in CAMERA_IPS.items():
@@ -36,7 +37,6 @@ def pick_camera() -> str:
             idx = len(all_ips)
             all_ips.append(ip)
             print(f"    {idx + 1:2d}. {ip}")
-
     print()
     while True:
         raw = input("输入编号或 IP 地址（直接回车连 10.8.14.34）: ").strip()
@@ -53,17 +53,44 @@ def pick_camera() -> str:
             print("  请输入有效的编号或 IP 地址")
 
 
-def preview(ip: str) -> None:
-    """连接摄像头并显示预览窗口。"""
-    url = f"rtsp://{USERNAME}:{PASSWORD}@{ip}:{PORT}{RTSP_PATH}"
-    print(f"\n正在连接 {ip} ...")
+def diagnose(ip: str, channel: str) -> bool:
+    """连接指定 channel，读几帧诊断。返回 True 表示画面正常。"""
+    url = f"rtsp://{USERNAME}:{PASSWORD}@{ip}:{PORT}/Streaming/Channels/{channel}"
+    print(f"\n[Channel {channel}] {url}")
 
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
     if not cap.isOpened():
-        print(f"无法连接 {ip}，请检查：")
-        print(f"  1. 网络是否能 ping 通 {ip}")
-        print("  2. 用户名/密码是否正确")
-        print("  3. RTSP 端口 554 是否开放")
+        print("  连接失败")
+        return False
+
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    print(f"  分辨率: {w}x{h}  FPS: {fps}")
+
+    ok_count = 0
+    for i in range(10):
+        ret, frame = cap.read()
+        if not ret:
+            print(f"  第{i+1}帧: 读取失败")
+            continue
+        mean_val = frame.mean()
+        status = "正常" if mean_val > 5 else "黑帧"
+        print(f"  第{i+1}帧: 像素均值={mean_val:.1f} [{status}]")
+        if mean_val > 5:
+            ok_count += 1
+
+    cap.release()
+    return ok_count >= 3
+
+
+def preview(ip: str, channel: str) -> None:
+    url = f"rtsp://{USERNAME}:{PASSWORD}@{ip}:{PORT}/Streaming/Channels/{channel}"
+    print(f"\n正在连接 Channel {channel} ...")
+
+    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        print("连接失败")
         return
 
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -72,7 +99,7 @@ def preview(ip: str) -> None:
     print(f"连接成功  {w}x{h} @ {fps:.1f}FPS")
     print("按 Q 退出预览\n")
 
-    window_name = f"RTSP Preview - {ip}"
+    window_name = f"RTSP {ip} Ch{channel}"
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -87,29 +114,32 @@ def preview(ip: str) -> None:
 
 
 def main():
-    if len(sys.argv) > 1:
-        ip = sys.argv[1]
+    use_sub = "--sub" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--sub"]
+
+    if args:
+        ip = args[0]
     else:
         ip = pick_camera()
 
-    while True:
-        preview(ip)
-        again = input("继续预览其他摄像头？(输入 IP/编号，直接回车退出): ").strip()
-        if not again:
-            break
-        if again.isdigit():
-            all_ips = [ip for group in CAMERA_IPS.values() for ip in group]
-            idx = int(again) - 1
-            if 0 <= idx < len(all_ips):
-                ip = all_ips[idx]
-            else:
-                print("编号无效，退出")
-                break
-        elif again.count(".") == 3:
-            ip = again
-        else:
-            print("输入无效，退出")
-            break
+    # 先诊断两个 channel
+    print(f"\n===== 诊断 {ip} =====")
+    ch101_ok = diagnose(ip, "101")
+    ch102_ok = diagnose(ip, "102")
+
+    if use_sub:
+        chosen = "102"
+    elif ch101_ok:
+        chosen = "101"
+    elif ch102_ok:
+        chosen = "102"
+        print(f"\n主码流(101)黑屏，自动切换到子码流(102)")
+    else:
+        print(f"\n两个 channel 都无法获取正常画面，请检查摄像头")
+        return
+
+    print(f"\n===== 预览 Channel {chosen} =====")
+    preview(ip, chosen)
 
 
 if __name__ == "__main__":
