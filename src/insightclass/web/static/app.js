@@ -193,6 +193,10 @@ function switchSource(source) {
   els.btnStop.style.display = showStart ? '' : 'none';
   els.btnFileList.style.display = showStart ? 'none' : '';
 
+  // Right sidebar: only show in RTSP mode
+  const rightSidebar = $('#right-sidebar');
+  if (rightSidebar) rightSidebar.style.display = source === 'rtsp' ? '' : 'none';
+
   showPlaceholder();
   resetStats();
   updateExportButton();
@@ -231,21 +235,10 @@ async function loadCameras() {
       return;
     }
 
-    // Always run connectivity test on load, then auto-connect to first online camera
+    // Auto-select first camera on load (no auto connectivity test)
     if (state.source === 'rtsp') {
-      testCameraConnectivity().then(() => {
-        // Find first connected camera and click it
-        const items = $$('.camera-item');
-        for (const el of items) {
-          const dot = el.querySelector('.cam-status');
-          if (dot && dot.classList.contains('connected')) {
-            el.click();
-            return;
-          }
-        }
-        // If no connected camera found, click first one anyway
-        if (items.length > 0) items[0].click();
-      });
+      const items = $$('.camera-item');
+      if (items.length > 0) items[0].click();
     }
   } catch (e) {
     console.error('Camera list error:', e);
@@ -1639,23 +1632,27 @@ async function deleteCamera(ip) {
   }
 }
 
+let _testingConnectivity = false;
+
 async function testCameraConnectivity() {
+  if (_testingConnectivity) return;
+  _testingConnectivity = true;
+
   const btn = $('#btn-test-cameras');
   btn.disabled = true;
   btn.style.opacity = '0.5';
 
-  // Set all to "testing" state
-  $$('.camera-item').forEach(el => {
+  const items = $$('.camera-item');
+  items.forEach(el => {
     const dot = el.querySelector('.cam-status');
     if (dot) dot.className = 'cam-status testing';
   });
 
-  // Test each camera individually for immediate feedback
-  const items = $$('.camera-item');
-  const promises = items.map(async (el) => {
+  // Sequential: test one by one, update UI immediately as each completes
+  for (const el of items) {
     const ip = el.dataset.ip;
     const dot = el.querySelector('.cam-status');
-    if (!dot || !ip) return;
+    if (!dot || !ip) continue;
     try {
       const res = await fetch(`/api/cameras/${ip}/test`);
       const data = await res.json();
@@ -1663,11 +1660,11 @@ async function testCameraConnectivity() {
     } catch (e) {
       dot.className = 'cam-status disconnected';
     }
-  });
+  }
 
-  await Promise.all(promises);
   btn.disabled = false;
   btn.style.opacity = '';
+  _testingConnectivity = false;
 }
 
 // ---- Camera Management Events ----

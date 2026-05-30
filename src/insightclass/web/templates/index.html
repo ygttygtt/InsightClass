@@ -86,24 +86,6 @@
 
     </div>
 
-    <!-- RTSP Camera List Panel (scrollable, takes remaining space) -->
-    <div class="sidebar-camera-panel source-panel active" id="panel-rtsp">
-      <div class="camera-panel-header">
-        <span class="camera-panel-title">摄像头列表</span>
-        <div class="cam-actions">
-          <button class="cam-action-btn" id="btn-test-cameras" title="测试连通性">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-          </button>
-          <button class="cam-action-btn" id="btn-add-camera" title="添加摄像头">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="camera-list" id="camera-list">
-        <div class="camera-loading">加载中...</div>
-      </div>
-    </div>
-
     <!-- Model & Params (bottom) -->
     <div class="sidebar-section params-section">
       <div class="section-label">模型与参数</div>
@@ -202,6 +184,24 @@
       </div>
     </div>
   </main>
+
+  <!-- Right Sidebar: Camera List -->
+  <aside class="right-sidebar" id="right-sidebar">
+    <div class="right-sidebar-header">
+      <span class="right-sidebar-title">摄像头</span>
+      <div class="cam-actions">
+        <button class="cam-action-btn" id="btn-test-cameras" title="测试连通性">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </button>
+        <button class="cam-action-btn" id="btn-add-camera" title="添加摄像头">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="camera-list" id="camera-list">
+      <div class="camera-loading">加载中...</div>
+    </div>
+  </aside>
 </div>
 
 <!-- Batch Playback Modal -->
