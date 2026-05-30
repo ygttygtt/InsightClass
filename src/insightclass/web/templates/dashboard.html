@@ -17,7 +17,7 @@
 html,body{height:100%;overflow:hidden}
 body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
 
-.dashboard{display:flex;flex-direction:column;height:100vh;padding:14px 20px;gap:12px}
+.dashboard{display:flex;flex-direction:column;min-height:100vh;height:100vh;padding:14px 20px;gap:12px;overflow-y:auto}
 
 /* ── Header ── */
 .dash-header{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;padding:0 4px}
@@ -70,11 +70,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 
 /* ── Chart Widget Grid ── */
 .chart-grid{
-  display:grid;grid-template-columns:1fr 1fr;gap:10px;flex-shrink:0
+  display:grid;grid-template-columns:1fr 1fr;gap:10px;flex-shrink:1
 }
 .chart-widget{
   background:var(--surface);border:1px solid var(--border);border-radius:10px;
-  padding:14px 18px;min-height:160px;
+  padding:14px 18px;min-height:120px;
   transition:box-shadow .25s,border-color .25s;
   position:relative;overflow:hidden
 }
@@ -141,7 +141,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 
 /* ── Bar Chart ── */
 .chart-row{
-  display:grid;grid-template-columns:1fr 1fr;gap:10px;flex-shrink:0
+  display:grid;grid-template-columns:1fr 1fr;gap:10px;flex-shrink:1
 }
 .chart-panel{
   background:var(--surface);border:1px solid var(--border);border-radius:10px;
@@ -171,8 +171,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 
 /* ── Camera Grid ── */
 .camera-grid{
-  flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;
-  overflow-y:auto;align-content:start;padding-bottom:8px
+  display:grid;grid-template-columns:repeat(4,1fr);gap:10px;
+  min-height:200px;align-content:start;padding-bottom:8px
 }
 .cam-card{
   background:var(--surface);border:1px solid var(--border);border-radius:10px;
