@@ -7,91 +7,143 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0a0e1a;--surface:#111827;--elevated:#1a2035;--border:#1e293b;
-  --text:#f1f5f9;--text2:#94a3b8;--text3:#64748b;
+  --bg:#070b14;--surface:#0f1623;--elevated:#151d2e;--border:#1c2540;
+  --text:#e2e8f0;--text2:#8892a8;--text3:#5a6380;
   --accent:#6366f1;--cyan:#06b6d4;--green:#10b981;--red:#ef4444;--yellow:#eab308;--blue:#3b82f6;
+  --glow-accent:rgba(99,102,241,.12);--glow-green:rgba(16,185,129,.15);--glow-red:rgba(239,68,68,.12);
   --font:'Noto Sans SC',-apple-system,BlinkMacSystemFont,sans-serif;
   --mono:'JetBrains Mono','Menlo',monospace;
 }
 html,body{height:100%;overflow:hidden}
 body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
 
-.dashboard{display:flex;flex-direction:column;height:100vh;padding:16px 24px;gap:16px}
+.dashboard{display:flex;flex-direction:column;height:100vh;padding:14px 20px;gap:12px}
 
-/* Header */
-.dash-header{display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
-.dash-title{font-size:22px;font-weight:700;letter-spacing:.02em}
-.dash-title span{background:linear-gradient(135deg,#818cf8,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.dash-actions{display:flex;gap:10px}
+/* ── Header ── */
+.dash-header{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;padding:0 4px}
+.dash-title{font-size:20px;font-weight:700;letter-spacing:.02em;display:flex;align-items:center;gap:10px}
+.dash-title .logo{background:linear-gradient(135deg,#818cf8,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.dash-title .sub{color:var(--text3);font-size:13px;font-weight:400}
+.dash-clock{font-family:var(--mono);font-size:15px;color:var(--cyan);letter-spacing:.05em}
+.dash-actions{display:flex;gap:8px;align-items:center}
 .dash-btn{
-  display:flex;align-items:center;gap:6px;padding:8px 18px;
+  display:flex;align-items:center;gap:6px;padding:7px 14px;
   background:var(--elevated);color:var(--text2);border:1px solid var(--border);
-  border-radius:8px;font-size:13px;font-family:var(--font);cursor:pointer;transition:all .15s
+  border-radius:8px;font-size:12px;font-family:var(--font);cursor:pointer;transition:all .15s
 }
-.dash-btn:hover{background:#1e2744;color:var(--text);border-color:var(--accent)}
+.dash-btn:hover{background:#1a2540;color:var(--text);border-color:var(--accent)}
 .dash-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
 .dash-btn.primary:hover{background:#818cf8}
 .dash-btn:disabled{opacity:.4;cursor:not-allowed}
+.dash-btn.active{background:rgba(99,102,241,.15);color:var(--accent);border-color:var(--accent)}
+.refresh-indicator{
+  width:7px;height:7px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 6px var(--green);animation:pulse 2s ease-in-out infinite
+}
+.refresh-indicator.paused{background:var(--text3);box-shadow:none;animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
-/* Summary Row */
+/* ── Summary Row ── */
 .summary-row{
-  display:grid;grid-template-columns:repeat(4,1fr) 120px 120px;gap:12px;flex-shrink:0
+  display:grid;grid-template-columns:repeat(4,1fr) 100px 100px;gap:10px;flex-shrink:0
 }
 .summary-card{
   background:var(--surface);border:1px solid var(--border);border-radius:10px;
-  padding:14px 18px;display:flex;align-items:center;gap:14px
+  padding:12px 16px;display:flex;align-items:center;gap:12px;
+  transition:border-color .2s
 }
-.summary-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.summary-card:hover{border-color:var(--accent)}
+.summary-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;box-shadow:0 0 6px currentColor}
 .summary-info{display:flex;flex-direction:column}
 .summary-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em}
-.summary-val{font-size:26px;font-weight:700;font-family:var(--mono)}
+.summary-val{font-size:24px;font-weight:700;font-family:var(--mono);transition:color .3s}
+.summary-trend{font-size:11px;margin-left:4px;font-weight:600}
+.summary-trend.up{color:var(--red)}
+.summary-trend.down{color:var(--green)}
 
 .summary-stat-card{
   background:var(--surface);border:1px solid var(--border);border-radius:10px;
-  padding:14px 18px;display:flex;flex-direction:column;align-items:center;justify-content:center
+  padding:12px 16px;display:flex;flex-direction:column;align-items:center;justify-content:center
 }
-.summary-stat-label{font-size:11px;color:var(--text3);letter-spacing:.06em}
-.summary-stat-val{font-size:22px;font-weight:700;font-family:var(--mono)}
+.summary-stat-label{font-size:10px;color:var(--text3);letter-spacing:.06em}
+.summary-stat-val{font-size:20px;font-weight:700;font-family:var(--mono)}
 
-/* Camera Grid */
+/* ── Bar Chart ── */
+.chart-row{
+  display:grid;grid-template-columns:1fr 1fr;gap:10px;flex-shrink:0
+}
+.chart-panel{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:14px 18px
+}
+.chart-title{font-size:12px;color:var(--text3);margin-bottom:10px;font-weight:600;letter-spacing:.04em}
+.bar-chart{display:flex;align-items:flex-end;gap:16px;height:60px}
+.bar-item{display:flex;flex-direction:column;align-items:center;flex:1;gap:4px;height:100%;justify-content:flex-end}
+.bar-fill{width:100%;border-radius:4px 4px 0 0;transition:height .5s ease;min-height:2px}
+.bar-label{font-size:10px;color:var(--text3)}
+.bar-val{font-size:11px;font-family:var(--mono);font-weight:600;color:var(--text2)}
+
+/* ── Filter Bar ── */
+.filter-bar{
+  display:flex;align-items:center;gap:12px;flex-shrink:0;padding:0 4px
+}
+.filter-label{font-size:11px;color:var(--text3);letter-spacing:.04em;font-weight:600;text-transform:uppercase}
+.filter-chip{
+  display:flex;align-items:center;gap:5px;padding:5px 12px;
+  background:var(--elevated);border:1px solid var(--border);border-radius:16px;
+  font-size:12px;color:var(--text2);cursor:pointer;transition:all .15s;user-select:none
+}
+.filter-chip:hover{border-color:var(--accent)}
+.filter-chip.active{background:rgba(99,102,241,.12);border-color:var(--accent);color:var(--accent)}
+.filter-chip .count{font-family:var(--mono);font-size:10px;color:var(--text3)}
+.filter-sep{width:1px;height:16px;background:var(--border)}
+
+/* ── Camera Grid ── */
 .camera-grid{
-  flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;
+  flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;
   overflow-y:auto;align-content:start;padding-bottom:8px
 }
 .cam-card{
   background:var(--surface);border:1px solid var(--border);border-radius:10px;
-  padding:16px;cursor:pointer;transition:all .2s;position:relative;display:flex;flex-direction:column;gap:10px
+  padding:14px;cursor:pointer;transition:border-color .2s,box-shadow .2s,transform .15s;
+  position:relative;display:flex;flex-direction:column;gap:8px
 }
-.cam-card:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 4px 20px rgba(99,102,241,.15)}
+.cam-card:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:0 4px 16px var(--glow-accent)}
+.cam-card.stream-active{border-color:var(--green);box-shadow:0 0 12px var(--glow-green)}
 .cam-card-header{display:flex;align-items:center;justify-content:space-between}
-.cam-card-name{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cam-card-ip{font-family:var(--mono);font-size:11px;color:var(--text3)}
+.cam-card-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
+.cam-card-group{font-size:10px;color:var(--text3);padding:2px 6px;background:var(--elevated);border-radius:4px}
+.cam-card-ip{font-family:var(--mono);font-size:10px;color:var(--text3)}
 .cam-status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.cam-status-dot.online{background:var(--green);box-shadow:0 0 8px var(--green)}
-.cam-status-dot.offline{background:var(--red);box-shadow:0 0 8px var(--red)}
+.cam-status-dot.online{background:var(--green);box-shadow:0 0 6px var(--green)}
+.cam-status-dot.offline{background:var(--red);box-shadow:0 0 6px var(--red)}
 
-.cam-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.cam-stats{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .cam-stat{
-  display:flex;align-items:center;gap:6px;padding:6px 8px;
-  background:var(--elevated);border-radius:6px;font-size:12px
+  display:flex;align-items:center;gap:5px;padding:5px 7px;
+  background:var(--elevated);border-radius:6px;font-size:12px;
+  transition:background .2s
 }
 .cam-stat-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.cam-stat-name{color:var(--text2);flex:1;font-size:11px}
-.cam-stat-num{font-weight:700;font-family:var(--mono);font-size:14px}
+.cam-stat-name{color:var(--text2);flex:1;font-size:10px}
+.cam-stat-num{font-weight:700;font-family:var(--mono);font-size:13px;transition:color .3s}
+.cam-stat-trend{font-size:10px;font-weight:600}
+.cam-stat-trend.up{color:var(--red)}
+.cam-stat-trend.down{color:var(--green)}
 
-.cam-card-footer{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text3)}
+/* Activity bar */
+.cam-activity{margin-top:2px}
+.cam-activity-label{display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-bottom:3px}
+.cam-activity-bar{height:3px;background:var(--elevated);border-radius:2px;overflow:hidden}
+.cam-activity-fill{height:100%;border-radius:2px;transition:width .6s ease;background:linear-gradient(90deg,var(--accent),var(--cyan))}
+
+.cam-card-footer{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:2px}
 .cam-card-time{font-family:var(--mono);font-size:10px}
 
-/* Animations */
-@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.cam-card{animation:fadeIn .3s ease both}
+/* hidden by filter */
+.cam-card.hidden{display:none}
 
-/* Responsive */
-@media(max-width:1400px){.camera-grid{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:1000px){.camera-grid{grid-template-columns:repeat(2,1fr)}.summary-row{grid-template-columns:repeat(2,1fr) 120px 120px}}
-@media(max-width:700px){.camera-grid{grid-template-columns:1fr}.summary-row{grid-template-columns:1fr 1fr}}
-
-/* Empty state */
+/* ── Empty state ── */
 .empty-state{
   grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:12px;padding:60px 0;color:var(--text3)
@@ -99,17 +151,19 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .empty-state svg{opacity:.3}
 .empty-state p{font-size:14px}
 
-/* Refresh indicator */
-.refresh-dot{
-  width:6px;height:6px;border-radius:50%;background:var(--green);
-  display:inline-block;margin-left:8px;animation:pulse 2s ease-in-out infinite
-}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-
-/* Scrollbar */
+/* ── Scrollbar ── */
 ::-webkit-scrollbar{width:5px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* ── Responsive ── */
+@media(max-width:1400px){.camera-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:1000px){
+  .camera-grid{grid-template-columns:repeat(2,1fr)}
+  .summary-row{grid-template-columns:repeat(2,1fr) 100px 100px}
+  .chart-row{grid-template-columns:1fr}
+}
+@media(max-width:700px){.camera-grid{grid-template-columns:1fr}.summary-row{grid-template-columns:1fr 1fr}}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -118,9 +172,16 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 <body>
 
 <div class="dashboard">
+  <!-- Header -->
   <div class="dash-header">
-    <div class="dash-title"><span>深见课堂</span> · 智慧监控大屏<span class="refresh-dot"></span></div>
+    <div class="dash-title">
+      <span class="logo">深见课堂</span>
+      <span class="sub">智慧监控大屏</span>
+      <span class="refresh-indicator" id="refresh-dot"></span>
+    </div>
+    <div class="dash-clock" id="clock">--:--:--</div>
     <div class="dash-actions">
+      <button class="dash-btn active" id="btn-auto-refresh" title="自动刷新">自动刷新</button>
       <button class="dash-btn primary" id="btn-report" title="生成今日报告">生成今日报告</button>
       <button class="dash-btn" id="btn-back" title="返回主页">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -129,69 +190,279 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
   </div>
 
+  <!-- Summary -->
   <div class="summary-row" id="summary-row">
     <div class="summary-card">
-      <div class="summary-dot" style="background:var(--red)"></div>
-      <div class="summary-info"><span class="summary-label">玩手机</span><span class="summary-val" id="total-phone_use">0</span></div>
+      <div class="summary-dot" style="background:var(--red);color:var(--red)"></div>
+      <div class="summary-info">
+        <span class="summary-label">玩手机</span>
+        <span><span class="summary-val" id="total-phone_use">0</span><span class="summary-trend" id="trend-phone_use"></span></span>
+      </div>
     </div>
     <div class="summary-card">
-      <div class="summary-dot" style="background:var(--blue)"></div>
-      <div class="summary-info"><span class="summary-label">交谈</span><span class="summary-val" id="total-talking">0</span></div>
+      <div class="summary-dot" style="background:var(--blue);color:var(--blue)"></div>
+      <div class="summary-info">
+        <span class="summary-label">交谈</span>
+        <span><span class="summary-val" id="total-talking">0</span><span class="summary-trend" id="trend-talking"></span></span>
+      </div>
     </div>
     <div class="summary-card">
-      <div class="summary-dot" style="background:var(--yellow)"></div>
-      <div class="summary-info"><span class="summary-label">打瞌睡</span><span class="summary-val" id="total-sleeping">0</span></div>
+      <div class="summary-dot" style="background:var(--yellow);color:var(--yellow)"></div>
+      <div class="summary-info">
+        <span class="summary-label">打瞌睡</span>
+        <span><span class="summary-val" id="total-sleeping">0</span><span class="summary-trend" id="trend-sleeping"></span></span>
+      </div>
     </div>
     <div class="summary-card">
-      <div class="summary-dot" style="background:var(--green)"></div>
-      <div class="summary-info"><span class="summary-label">站立</span><span class="summary-val" id="total-standing">0</span></div>
+      <div class="summary-dot" style="background:var(--green);color:var(--green)"></div>
+      <div class="summary-info">
+        <span class="summary-label">站立</span>
+        <span><span class="summary-val" id="total-standing">0</span><span class="summary-trend" id="trend-standing"></span></span>
+      </div>
     </div>
     <div class="summary-stat-card">
-      <span class="summary-stat-label">在线摄像头</span>
+      <span class="summary-stat-label">在线</span>
       <span class="summary-stat-val" id="online-count" style="color:var(--green)">0</span>
     </div>
     <div class="summary-stat-card">
-      <span class="summary-stat-label">摄像头总数</span>
+      <span class="summary-stat-label">总数</span>
       <span class="summary-stat-val" id="total-cameras">0</span>
     </div>
   </div>
 
+  <!-- Bar Chart -->
+  <div class="chart-row" id="chart-row">
+    <div class="chart-panel">
+      <div class="chart-title">检测统计 · 柱状图</div>
+      <div class="bar-chart" id="bar-chart"></div>
+    </div>
+    <div class="chart-panel">
+      <div class="chart-title">摄像头在线率</div>
+      <div class="bar-chart" id="online-chart"></div>
+    </div>
+  </div>
+
+  <!-- Filter -->
+  <div class="filter-bar" id="filter-bar">
+    <span class="filter-label">摄像头筛选</span>
+    <div class="filter-sep"></div>
+  </div>
+
+  <!-- Camera Grid -->
   <div class="camera-grid" id="camera-grid"></div>
 </div>
 
 <script>
 const COLORS = {phone_use:'var(--red)',talking:'var(--blue)',sleeping:'var(--yellow)',standing:'var(--green)'};
+const COLORS_HEX = {phone_use:'#ef4444',talking:'#3b82f6',sleeping:'#eab308',standing:'#10b981'};
 const LABELS = {phone_use:'玩手机',talking:'交谈',sleeping:'打瞌睡',standing:'站立'};
 const CLASSES = ['phone_use','talking','sleeping','standing'];
+const GROUP_LABELS = {front:'前视角',rear:'后视角',custom:'自定义'};
 
-let prevValues = {};
+let prevSummary = {};
+let prevCamStats = {};  // ip -> {cls: val}
+let autoRefresh = true;
+let refreshTimer = null;
+let activeFilters = JSON.parse(localStorage.getItem('dashboard_filters') || 'null');
+// default: all active
+let knownGroups = new Set();
 
-function animateValue(el, newVal) {
-  const oldVal = parseInt(el.textContent) || 0;
-  if (newVal === oldVal) return;
-  el.textContent = newVal;
-  el.style.transition = 'none';
-  el.style.color = newVal > oldVal ? '#fff' : '';
-  el.style.transform = 'scale(1.2)';
-  requestAnimationFrame(() => {
-    el.style.transition = 'all .3s ease';
-    el.style.transform = 'scale(1)';
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── Clock ──
+function updateClock() {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mm = String(now.getMinutes()).padStart(2,'0');
+  const ss = String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clock').textContent = hh + ':' + mm + ':' +ss;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Trend helpers ──
+function getTrend(newVal, oldVal) {
+  if (oldVal === undefined || newVal === oldVal) return '';
+  return newVal > oldVal ? '<span class="summary-trend up">&#9650;</span>' : '<span class="summary-trend down">&#9660;</span>';
+}
+function getCamTrend(newVal, oldVal) {
+  if (oldVal === undefined || newVal === oldVal) return '';
+  return newVal > oldVal ? '<span class="cam-stat-trend up">+</span>' : '<span class="cam-stat-trend down">-</span>';
+}
+
+// ── Filter Logic ──
+function initFilters(groups) {
+  const bar = document.getElementById('filter-bar');
+  // Clear old chips
+  bar.querySelectorAll('.filter-chip').forEach(c => c.remove());
+  if (activeFilters === null) {
+    activeFilters = {};
+    groups.forEach(g => activeFilters[g] = true);
+  }
+  groups.forEach(g => {
+    if (activeFilters[g] === undefined) activeFilters[g] = true;
+    const chip = document.createElement('div');
+    chip.className = 'filter-chip' + (activeFilters[g] ? ' active' : '');
+    chip.dataset.group = g;
+    chip.innerHTML = esc(GROUP_LABELS[g] || g) + ' <span class="count" id="filter-count-' + g + '">0</span>';
+    chip.addEventListener('click', () => {
+      activeFilters[g] = !activeFilters[g];
+      chip.classList.toggle('active', activeFilters[g]);
+      localStorage.setItem('dashboard_filters', JSON.stringify(activeFilters));
+      applyFilters();
+    });
+    bar.appendChild(chip);
   });
 }
 
+function applyFilters() {
+  document.querySelectorAll('.cam-card[data-group]').forEach(card => {
+    const g = card.dataset.group;
+    card.classList.toggle('hidden', !activeFilters[g]);
+  });
+  // Update counts
+  for (const g of knownGroups) {
+    const el = document.getElementById('filter-count-' + g);
+    if (el) {
+      const total = document.querySelectorAll('.cam-card[data-group="' + g + '"]').length;
+      el.textContent = total;
+    }
+  }
+}
+
+// ── Bar Chart ──
+function updateBarChart(data) {
+  const chart = document.getElementById('bar-chart');
+  const maxVal = Math.max(1, ...CLASSES.map(c => data.total[c] || 0));
+  let html = '';
+  for (const cls of CLASSES) {
+    const val = data.total[cls] || 0;
+    const pct = Math.round((val / maxVal) * 100);
+    html += '<div class="bar-item">' +
+      '<div class="bar-val">' + val + '</div>' +
+      '<div class="bar-fill" style="height:' + Math.max(pct, 3) + '%;background:' + COLORS_HEX[cls] + '"></div>' +
+      '<div class="bar-label">' + LABELS[cls] + '</div>' +
+      '</div>';
+  }
+  chart.innerHTML = html;
+}
+
+function updateOnlineChart(data) {
+  const chart = document.getElementById('online-chart');
+  const online = data.online_count || 0;
+  const offline = (data.total_cameras || 0) - online;
+  const maxVal = Math.max(1, data.total_cameras || 1);
+  const onlinePct = Math.round((online / maxVal) * 100);
+  const offlinePct = Math.round((offline / maxVal) * 100);
+  chart.innerHTML =
+    '<div class="bar-item"><div class="bar-val">' + online + '</div><div class="bar-fill" style="height:' + Math.max(onlinePct,3) + '%;background:var(--green)"></div><div class="bar-label">在线</div></div>' +
+    '<div class="bar-item"><div class="bar-val">' + offline + '</div><div class="bar-fill" style="height:' + Math.max(offlinePct,3) + '%;background:var(--red)"></div><div class="bar-label">离线</div></div>';
+}
+
+// ── Build card HTML (only on first render) ──
+function buildCardHTML(cam, idx) {
+  const onlineClass = cam.online ? 'online' : 'offline';
+  const statusText = cam.online ? '在线' : '离线';
+  const timeStr = cam.last_update ? cam.last_update.replace('T', ' ') : '--';
+  const totalDet = CLASSES.reduce((s, c) => s + (cam.stats[c] || 0), 0);
+
+  let statsHtml = '';
+  for (const cls of CLASSES) {
+    const val = cam.stats[cls] || 0;
+    statsHtml += '<div class="cam-stat"><span class="cam-stat-dot" style="background:' + COLORS[cls] + '"></span><span class="cam-stat-name">' + LABELS[cls] + '</span><span class="cam-stat-num" data-cls="' + cls + '">' + val + '</span><span class="cam-stat-trend" data-cls-trend="' + cls + '"></span></div>';
+  }
+
+  return '<div class="cam-card' + (cam.online ? ' stream-active' : '') + '" data-ip="' + cam.ip + '" data-group="' + cam.group + '">' +
+    '<div class="cam-card-header"><div><div class="cam-card-name">' + esc(cam.name || cam.ip) + '</div><div class="cam-card-ip">' + esc(cam.ip) + '</div></div>' +
+    '<span class="cam-card-group">' + esc(cam.group_label || '') + '</span>' +
+    '<span class="cam-status-dot ' + onlineClass + '" title="' + statusText + '"></span></div>' +
+    '<div class="cam-stats">' + statsHtml + '</div>' +
+    '<div class="cam-activity"><div class="cam-activity-label"><span>活跃度</span><span class="cam-activity-val">0%</span></div><div class="cam-activity-bar"><div class="cam-activity-fill" style="width:0%"></div></div></div>' +
+    '<div class="cam-card-footer"><span>' + statusText + '</span><span class="cam-card-time">' + timeStr + '</span></div>' +
+    '</div>';
+}
+
+// ── Update existing card values in-place ──
+function updateCardValues(card, cam, prevCam) {
+  // Status dot
+  const dot = card.querySelector('.cam-status-dot');
+  dot.className = 'cam-status-dot ' + (cam.online ? 'online' : 'offline');
+  dot.title = cam.online ? '在线' : '离线';
+  card.classList.toggle('stream-active', cam.online);
+
+  // Stats
+  for (const cls of CLASSES) {
+    const numEl = card.querySelector('.cam-stat-num[data-cls="' + cls + '"]');
+    const trendEl = card.querySelector('.cam-stat-trend[data-cls-trend="' + cls + '"]');
+    if (numEl) {
+      const newVal = cam.stats[cls] || 0;
+      const oldVal = prevCam ? (prevCam[cls] || 0) : newVal;
+      numEl.textContent = newVal;
+      numEl.style.color = newVal > oldVal ? '#fff' : '';
+      setTimeout(() => { numEl.style.color = ''; }, 400);
+    }
+    if (trendEl) {
+      const oldVal = prevCam ? prevCam[cls] : undefined;
+      trendEl.innerHTML = getCamTrend(cam.stats[cls] || 0, oldVal);
+    }
+  }
+
+  // Activity
+  const maxDet = CLASSES.reduce((s, c) => {
+    const v = cam.stats[c] || 0;
+    return v > s ? v : s;
+  }, 0);
+  const totalDet = CLASSES.reduce((s, c) => s + (cam.stats[c] || 0), 0);
+  // Activity is relative to all cameras: use a simple heuristic
+  // Show total detections as a fraction of max camera's total (computed outside)
+  const actVal = card.querySelector('.cam-activity-val');
+  const actFill = card.querySelector('.cam-activity-fill');
+  if (actVal && actFill) {
+    // Will be set after all cards are processed (need max across all cameras)
+  }
+
+  // Footer
+  const footer = card.querySelector('.cam-card-footer span:first-child');
+  if (footer) footer.textContent = cam.online ? '在线' : '离线';
+  const timeEl = card.querySelector('.cam-card-time');
+  if (timeEl) timeEl.textContent = cam.last_update ? cam.last_update.replace('T', ' ') : '--';
+}
+
+// ── Main Refresh ──
 async function refresh() {
   try {
     const res = await fetch('/api/dashboard/stats');
     if (!res.ok) return;
     const data = await res.json();
 
-    // Summary
+    // Summary with trends
     for (const cls of CLASSES) {
       const el = document.getElementById('total-' + cls);
-      if (el) animateValue(el, data.total[cls] || 0);
+      const trendEl = document.getElementById('trend-' + cls);
+      if (el) {
+        const newVal = data.total[cls] || 0;
+        const oldVal = prevSummary[cls];
+        el.textContent = newVal;
+        if (trendEl) trendEl.innerHTML = getTrend(newVal, oldVal);
+        if (oldVal !== undefined && newVal !== oldVal) {
+          el.style.color = '#fff';
+          setTimeout(() => { el.style.color = ''; }, 500);
+        }
+        prevSummary[cls] = newVal;
+      }
     }
-    animateValue(document.getElementById('online-count'), data.online_count || 0);
-    animateValue(document.getElementById('total-cameras'), data.total_cameras || 0);
+    const onlineEl = document.getElementById('online-count');
+    const totalEl = document.getElementById('total-cameras');
+    if (onlineEl) onlineEl.textContent = data.online_count || 0;
+    if (totalEl) totalEl.textContent = data.total_cameras || 0;
+
+    // Bar charts
+    updateBarChart(data);
+    updateOnlineChart(data);
 
     // Camera cards
     const grid = document.getElementById('camera-grid');
@@ -202,47 +473,110 @@ async function refresh() {
       return;
     }
 
-    // Build cards HTML
-    let html = '';
+    // Collect groups
+    const groups = [...new Set(cameras.map(c => c.group))];
+    groups.forEach(g => knownGroups.add(g));
+    if (document.querySelectorAll('.filter-chip').length === 0 || groups.length !== knownGroups.size) {
+      initFilters(groups);
+    }
+
+    // Calculate max total detections across all cameras (for activity bar)
+    const camTotals = cameras.map(c => CLASSES.reduce((s, cls) => s + (c.stats[cls] || 0), 0));
+    const maxTotal = Math.max(1, ...camTotals);
+
+    // Check if cards already exist
+    const existingCards = grid.querySelectorAll('.cam-card');
+    if (existingCards.length === 0 || existingCards.length !== cameras.length) {
+      // Full rebuild
+      let html = '';
+      for (let i = 0; i < cameras.length; i++) {
+        html += buildCardHTML(cameras[i], i);
+      }
+      grid.innerHTML = html;
+
+      // Bind click events
+      grid.querySelectorAll('.cam-card').forEach(card => {
+        card.addEventListener('click', () => {
+          const ip = card.dataset.ip;
+          window.location.href = '/?camera=' + encodeURIComponent(ip);
+        });
+      });
+    } else {
+      // Update in-place
+      for (let i = 0; i < cameras.length; i++) {
+        const cam = cameras[i];
+        const card = existingCards[i];
+        if (card.dataset.ip !== cam.ip) {
+          // IP mismatch, do full rebuild next time
+          grid.innerHTML = '';
+          refresh();
+          return;
+        }
+        const prevCam = prevCamStats[cam.ip];
+        updateCardValues(card, cam, prevCam);
+      }
+    }
+
+    // Update activity bars (need maxTotal)
     for (let i = 0; i < cameras.length; i++) {
       const cam = cameras[i];
-      const onlineClass = cam.online ? 'online' : 'offline';
-      const statusText = cam.online ? '在线' : '离线';
-      const timeStr = cam.last_update ? cam.last_update.replace('T', ' ') : '--';
-
-      let statsHtml = '';
-      for (const cls of CLASSES) {
-        const val = cam.stats[cls] || 0;
-        statsHtml += '<div class="cam-stat"><span class="cam-stat-dot" style="background:' + COLORS[cls] + '"></span><span class="cam-stat-name">' + LABELS[cls] + '</span><span class="cam-stat-num" data-ip="' + cam.ip + '" data-cls="' + cls + '">' + val + '</span></div>';
+      const totalDet = camTotals[i];
+      const pct = Math.round((totalDet / maxTotal) * 100);
+      const card = existingCards.length === cameras.length ? existingCards[i] : grid.querySelectorAll('.cam-card')[i];
+      if (card) {
+        const actVal = card.querySelector('.cam-activity-val');
+        const actFill = card.querySelector('.cam-activity-fill');
+        if (actVal) actVal.textContent = pct + '%';
+        if (actFill) actFill.style.width = pct + '%';
       }
-
-      html += '<div class="cam-card" data-ip="' + cam.ip + '" style="animation-delay:' + (i * 40) + 'ms">' +
-        '<div class="cam-card-header"><div><div class="cam-card-name">' + esc(cam.name || cam.ip) + '</div><div class="cam-card-ip">' + esc(cam.ip) + '</div></div><span class="cam-status-dot ' + onlineClass + '" title="' + statusText + '"></span></div>' +
-        '<div class="cam-stats">' + statsHtml + '</div>' +
-        '<div class="cam-card-footer"><span>' + statusText + '</span><span class="cam-card-time">' + timeStr + '</span></div>' +
-        '</div>';
     }
-    grid.innerHTML = html;
 
-    // Bind click events
-    grid.querySelectorAll('.cam-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const ip = card.dataset.ip;
-        window.location.href = '/?camera=' + encodeURIComponent(ip);
-      });
-    });
+    // Save prev stats
+    for (const cam of cameras) {
+      prevCamStats[cam.ip] = { ...cam.stats };
+    }
+
+    // Apply filters
+    updateFilterCounts(cameras);
+    applyFilters();
   } catch (e) {
     console.error('Dashboard refresh error:', e);
   }
 }
 
-function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+function updateFilterCounts(cameras) {
+  const counts = {};
+  for (const cam of cameras) {
+    counts[cam.group] = (counts[cam.group] || 0) + 1;
+  }
+  for (const g of knownGroups) {
+    const el = document.getElementById('filter-count-' + g);
+    if (el) el.textContent = counts[g] || 0;
+  }
 }
 
-// Report download
+// ── Auto Refresh Toggle ──
+document.getElementById('btn-auto-refresh').addEventListener('click', function() {
+  autoRefresh = !autoRefresh;
+  this.classList.toggle('active', autoRefresh);
+  this.textContent = autoRefresh ? '自动刷新' : '已暂停';
+  document.getElementById('refresh-dot').classList.toggle('paused', !autoRefresh);
+  if (autoRefresh) {
+    startRefresh();
+  } else {
+    stopRefresh();
+  }
+});
+
+function startRefresh() {
+  stopRefresh();
+  refreshTimer = setInterval(refresh, 5000);
+}
+function stopRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+}
+
+// ── Report ──
 document.getElementById('btn-report').addEventListener('click', async () => {
   const btn = document.getElementById('btn-report');
   btn.disabled = true;
@@ -266,14 +600,14 @@ document.getElementById('btn-report').addEventListener('click', async () => {
   btn.textContent = '生成今日报告';
 });
 
-// Back button
+// ── Back ──
 document.getElementById('btn-back').addEventListener('click', () => {
   window.location.href = '/';
 });
 
-// Initial load + auto-refresh every 5s
+// ── Init ──
 refresh();
-setInterval(refresh, 5000);
+startRefresh();
 </script>
 </body>
 </html>

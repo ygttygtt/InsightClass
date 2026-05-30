@@ -1112,6 +1112,22 @@ async function addFilesToList(fileInput) {
 }
 
 async function previewFile(entry) {
+  // Stop any ongoing video playback / detection before switching
+  if (state.detecting) { state.detecting = false; }
+  if (state.detectTimer) { clearTimeout(state.detectTimer); state.detectTimer = null; }
+  if (state.animId) { cancelAnimationFrame(state.animId); state.animId = null; }
+  els.video.pause();
+  if (state.videoBlobUrl) {
+    URL.revokeObjectURL(state.videoBlobUrl);
+    state.videoBlobUrl = null;
+  }
+  els.video.src = '';
+  els.video.srcObject = null;
+  els.video.controls = false;
+  els.video.classList.add('hidden');
+  state.lastResults = [];
+  els.ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
+
   state.activeFileId = entry.id;
   renderFilePanel();
   const file = entry.file;

@@ -5,6 +5,7 @@ import csv
 import io
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -722,6 +723,14 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
     for ips in DEFAULT_CAMERA_GROUPS.values():
         default_ips.update(ips)
 
+    # Determine which IP is currently streaming (if any)
+    streaming_ip = None
+    if _stream_manager._url and _stream_manager._status in ("connecting", "streaming"):
+        # Extract IP from rtsp://user:pass@IP:port/...
+        _m = re.search(r"@(\d+\.\d+\.\d+\.\d+)", _stream_manager._url)
+        if _m:
+            streaming_ip = _m.group(1)
+
     cameras = []
     for group, ips in DEFAULT_CAMERA_GROUPS.items():
         for ip in ips:
@@ -734,6 +743,7 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
                 "rtsp_url": _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT),
                 "note": custom.get("note", "") if custom else "",
                 "custom": False,
+                "_status": "connected" if ip == streaming_ip else "disconnected",
             }
             if include_credentials:
                 cam["username"] = DEFAULT_RTSP_USERNAME
@@ -752,6 +762,7 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
             "rtsp_url": _build_rtsp_url(cam["ip"], cam.get("username", DEFAULT_RTSP_USERNAME), cam.get("password", DEFAULT_RTSP_PASSWORD), cam.get("port", DEFAULT_RTSP_PORT)),
             "note": cam.get("note", ""),
             "custom": True,
+            "_status": "connected" if cam["ip"] == streaming_ip else "disconnected",
         }
         if include_credentials:
             entry["username"] = cam.get("username", DEFAULT_RTSP_USERNAME)
@@ -992,6 +1003,8 @@ async def dashboard_stats():
         result_cameras.append({
             "ip": ip,
             "name": cam.get("name") or cam.get("group_label", ""),
+            "group": cam.get("group", "custom"),
+            "group_label": cam.get("group_label", "自定义"),
             "online": cam.get("_status", "unknown") == "connected",
             "stats": data["stats"],
             "last_update": data["last_update"],

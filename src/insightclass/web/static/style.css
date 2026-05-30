@@ -135,7 +135,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0;
-  max-height: 360px;
+  max-height: calc(100vh - 480px);
+  min-height: 80px;
   overflow-y: auto;
 }
 .camera-loading {
