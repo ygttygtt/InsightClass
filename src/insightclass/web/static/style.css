@@ -265,9 +265,9 @@ body {
   flex-shrink: 0;
   margin-left: 2px;
 }
-.camera-item .cam-status.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
-.camera-item .cam-status.disconnected { background: var(--red); box-shadow: 0 0 8px var(--red); }
-.camera-item .cam-status.unknown { background: var(--text-muted); }
+.camera-item .cam-status.connected { background: var(--green); box-shadow: 0 0 8px var(--green); animation: none; }
+.camera-item .cam-status.disconnected { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
+.camera-item .cam-status.unknown { background: var(--text-muted); animation: none; }
 .camera-item .cam-status.testing {
   background: var(--yellow);
   box-shadow: 0 0 8px var(--yellow);
