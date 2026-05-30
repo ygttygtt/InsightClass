@@ -1654,7 +1654,11 @@ async function testCameraConnectivity() {
     const dot = el.querySelector('.cam-status');
     if (!dot || !ip) continue;
     try {
-      const res = await fetch(`/api/cameras/${ip}/test`);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(`/api/cameras/${ip}/test`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) { dot.className = 'cam-status disconnected'; continue; }
       const data = await res.json();
       dot.className = 'cam-status ' + (data.status || 'disconnected');
     } catch (e) {

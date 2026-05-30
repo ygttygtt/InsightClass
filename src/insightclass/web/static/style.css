@@ -62,7 +62,7 @@ body {
   color: var(--text-muted);
 }
 .right-sidebar .camera-list {
-  display: block !important;
+  display: flex !important;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -515,48 +515,6 @@ body {
 }
 .btn-set-default:hover { color: var(--yellow); }
 .btn-set-default.saved { color: var(--green); }
-
-/* ---- Sidebar Camera Panel (scrollable, between controls and params) ---- */
-.sidebar-camera-panel {
-  flex: 1;
-  display: none;
-  flex-direction: column;
-  overflow-y: auto;
-  border-top: 2px solid var(--border-light);
-  min-height: 200px;
-}
-.sidebar-camera-panel.active { display: flex; }
-.sidebar-camera-panel.collapsed .camera-list { display: none; }
-.sidebar-camera-panel.collapsed .camera-panel-toggle { transform: rotate(-90deg); }
-
-.camera-panel-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 14px 20px 10px;
-  flex-shrink: 0;
-  cursor: pointer;
-  user-select: none;
-  transition: background .15s;
-  border-radius: var(--radius-sm);
-}
-.camera-panel-header:hover { background: var(--bg-hover); }
-.camera-panel-toggle {
-  font-size: 10px;
-  color: var(--text-muted);
-  transition: transform .2s;
-  width: 12px;
-  text-align: center;
-  flex-shrink: 0;
-  line-height: 1;
-}
-.camera-panel-title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .1em;
-  color: var(--text-muted);
-}
 
 /* ---- Params ---- */
 .params-section { margin-top: auto; }
