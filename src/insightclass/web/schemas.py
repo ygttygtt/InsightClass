@@ -38,3 +38,23 @@ class ExperimentSummary(BaseModel):
     weights_path: str
     class_names: list[str]
     metrics: dict
+
+
+class BatchDetectionResult(BaseModel):
+    filename: str
+    status: str  # pending / processing / done / error
+    frames: list[FrameOut] = []
+    frame_count: int = 0
+    fps: float = 0
+    video_width: int = 0
+    video_height: int = 0
+    latency_sec: float = 0
+    error: str = ""
+    detection_summary: dict = {}
+
+
+class BatchJob(BaseModel):
+    batch_id: str
+    status: str  # processing / done / error
+    items: list[BatchDetectionResult]
+    total_latency_sec: float = 0

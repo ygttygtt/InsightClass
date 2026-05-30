@@ -10,7 +10,7 @@
 
 ```bash
 cd InsightClass
-pip install -e .[ultralytics]
+pip install -e .[ultralytics,web]
 ```
 
 ---
@@ -123,13 +123,19 @@ python -m insightclass render-first-frame --config configs/inference.demo.yaml
 启动本地 Web 服务器：
 
 ```bash
-python -m insightclass serve --host 0.0.0.0 --port 8000
+python -m insightclass serve --host 0.0.0.0 --port 8080
 ```
 
-浏览器打开 `http://localhost:8000`，支持两种模式：
+> **端口说明**：默认端口 8000。若被占用（如海康摄像头后台），改用 `--port 8080`。
 
-- **摄像头模式**：实时捕获摄像头画面，逐帧检测
-- **视频上传**：上传视频文件，服务端推理后同步播放带标注的结果
+浏览器打开 `http://localhost:8080`，支持四种模式：
+
+- **RTSP 实时监控**：连接教室摄像头，实时查看画面并叠加检测框
+- **电脑摄像头**：使用笔记本摄像头实时检测
+- **图片检测**：上传图片进行离线分析
+- **视频检测**：上传视频文件，服务端推理后同步播放带标注的结果
+
+> **摄像头配置**：`configs/cameras.yaml` 和 `configs/app.yaml` 由 Web 界面自动管理，点击左侧「添加摄像头」即可配置，无需手动编辑文件。
 
 ---
 

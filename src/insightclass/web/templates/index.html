@@ -135,7 +135,29 @@
         <span>拖拽或点击选择视频</span>
         <em>支持 MP4 / AVI / MOV</em>
       </label>
-      <button class="btn-action" id="btn-detect-video" disabled>开始分析</button>
+      <button class="btn-action" id="btn-detect-video" disabled>单视频分析</button>
+      <div class="batch-divider"><span>或</span></div>
+      <label class="upload-zone" id="video-batch-drop">
+        <input type="file" id="video-batch-input" accept="video/*" multiple>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>批量上传视频</span>
+        <em>可同时选择多个文件</em>
+      </label>
+      <!-- Batch Queue -->
+      <div class="batch-queue hidden" id="batch-queue">
+        <div class="batch-queue-header">
+          <span>待处理列表</span>
+          <span class="batch-queue-count" id="batch-queue-count">0</span>
+        </div>
+        <div class="batch-queue-list" id="batch-queue-list"></div>
+        <div class="batch-actions">
+          <button class="btn-action" id="btn-batch-detect" disabled>批量检测</button>
+          <div class="batch-export-row hidden" id="batch-export-row">
+            <button class="btn-export" id="btn-export-csv" title="导出 CSV">CSV</button>
+            <button class="btn-export" id="btn-export-json" title="导出 JSON">JSON</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Model & Params -->
@@ -228,6 +250,28 @@
       </div>
     </div>
   </main>
+</div>
+
+<!-- Batch Playback Modal -->
+<div id="playback-modal" class="playback-modal hidden">
+  <div class="playback-container">
+    <div class="playback-header">
+      <span class="playback-title" id="playback-title">检测结果</span>
+      <button class="playback-close" id="playback-close">&times;</button>
+    </div>
+    <div class="playback-body">
+      <div class="playback-viewer">
+        <video id="playback-video" playsinline></video>
+        <canvas id="playback-canvas"></canvas>
+      </div>
+      <div class="playback-controls">
+        <button class="playback-btn" id="playback-play-btn">播放</button>
+        <span class="playback-time" id="playback-time">0:00 / 0:00</span>
+        <input type="range" class="playback-seek" id="playback-seek" min="0" max="100" value="0" step="0.1">
+      </div>
+      <div class="playback-stats" id="playback-stats"></div>
+    </div>
+  </div>
 </div>
 
 <script>

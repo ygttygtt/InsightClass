@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
+import json
 import os
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -21,6 +25,8 @@ from insightclass.schemas import InferenceConfig
 from insightclass.utils.serialization import load_yaml, save_yaml
 from insightclass.web.model_cache import clear_cache, get_model, preload_model
 from insightclass.web.schemas import (
+    BatchDetectionResult,
+    BatchJob,
     DetectionOut,
     ExperimentSummary,
     FrameDetectionResponse,
@@ -132,6 +138,8 @@ class RtspStreamManager:
 
 
 _stream_manager = RtspStreamManager()
+
+_batch_jobs: dict[str, dict] = {}
 
 
 def _validate_weights_path(path: str) -> str:
@@ -416,6 +424,233 @@ async def detect_upload(
         video_width=video_width,
         video_height=video_height,
     )
+
+
+# ---- Batch Video Detection ----
+
+@app.post("/api/detect/batch-upload")
+async def batch_upload(videos: list[UploadFile] = File(...)):
+    batch_id = uuid.uuid4().hex[:12]
+    tmp_dir = tempfile.mkdtemp(prefix="ic_batch_")
+    items: list[dict] = []
+    for v in videos:
+        suffix = Path(v.filename).suffix if v.filename else ".mp4"
+        safe_name = Path(v.filename).name if v.filename else f"video{suffix}"
+        tmp_path = Path(tmp_dir) / safe_name
+        contents = await v.read()
+        tmp_path.write_bytes(contents)
+        items.append({
+            "filename": safe_name,
+            "status": "pending",
+            "frames": [],
+            "frame_count": 0,
+            "fps": 0,
+            "video_width": 0,
+            "video_height": 0,
+            "latency_sec": 0,
+            "error": "",
+            "detection_summary": {},
+            "_path": str(tmp_path),
+        })
+    _batch_jobs[batch_id] = {
+        "batch_id": batch_id,
+        "status": "pending",
+        "items": items,
+        "total_latency_sec": 0,
+        "_dir": tmp_dir,
+    }
+    return JSONResponse({
+        "batch_id": batch_id,
+        "status": "pending",
+        "item_count": len(items),
+    })
+
+
+@app.post("/api/detect/batch/{batch_id}")
+async def batch_detect(
+    batch_id: str,
+    model: str = Form(default=""),
+    confidence: float = Form(default=DEFAULT_CONFIDENCE),
+    iou: float = Form(default=DEFAULT_IOU),
+):
+    job = _batch_jobs.get(batch_id)
+    if not job:
+        return JSONResponse({"error": "Batch not found"}, status_code=404)
+
+    weights_path = model if model else (_find_default_weights() or "")
+    if weights_path:
+        weights_path = _validate_weights_path(weights_path)
+
+    t0 = time.time()
+    job["status"] = "processing"
+    display_names = _load_class_display_names()
+    backend = build_backend("ultralytics")
+
+    for item in job["items"]:
+        item["status"] = "processing"
+        try:
+            video_path = item["_path"]
+            cap = cv2.VideoCapture(video_path)
+            item["fps"] = round(cap.get(cv2.CAP_PROP_FPS) or 30.0, 2)
+            item["video_width"] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            item["video_height"] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            item["frame_count"] = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+
+            t1 = time.time()
+            config = InferenceConfig(
+                backend="ultralytics",
+                weights_path=weights_path,
+                source=video_path,
+                output_dir=os.path.join(job["_dir"], "output"),
+                confidence=confidence,
+                iou=iou,
+                device="cpu",
+                save_frames=False,
+                save_video=False,
+            )
+            predictions = backend.load_predictions_as_sv_detections(config)
+
+            frames_out: list[dict] = []
+            summary: dict[str, int] = {}
+            for fp in predictions:
+                dets = []
+                for d in fp.detections:
+                    dets.append(DetectionOut(
+                        xyxy=d.xyxy,
+                        confidence=d.confidence,
+                        class_id=d.class_id,
+                        class_name=d.class_name,
+                        display_name=display_names.get(d.class_name, d.class_name),
+                    ).model_dump())
+                    summary[d.class_name] = summary.get(d.class_name, 0) + 1
+                frames_out.append({"frame_index": fp.frame_index, "detections": dets})
+
+            item["frames"] = frames_out
+            item["detection_summary"] = summary
+            item["latency_sec"] = round(time.time() - t1, 2)
+            item["status"] = "done"
+        except Exception as e:
+            item["status"] = "error"
+            item["error"] = str(e)
+
+    job["status"] = "done"
+    job["total_latency_sec"] = round(time.time() - t0, 2)
+
+    return JSONResponse(_batch_response(job))
+
+
+@app.get("/api/detect/batch/{batch_id}")
+async def batch_status(batch_id: str):
+    job = _batch_jobs.get(batch_id)
+    if not job:
+        return JSONResponse({"error": "Batch not found"}, status_code=404)
+    return JSONResponse(_batch_response(job))
+
+
+@app.get("/api/detect/batch/{batch_id}/item/{index}")
+async def batch_item_detail(batch_id: str, index: int):
+    job = _batch_jobs.get(batch_id)
+    if not job:
+        return JSONResponse({"error": "Batch not found"}, status_code=404)
+    if index < 0 or index >= len(job["items"]):
+        return JSONResponse({"error": "Item index out of range"}, status_code=400)
+    item = job["items"][index]
+    return JSONResponse({
+        "filename": item["filename"],
+        "status": item["status"],
+        "frames": item["frames"],
+        "frame_count": item["frame_count"],
+        "fps": item["fps"],
+        "video_width": item["video_width"],
+        "video_height": item["video_height"],
+        "latency_sec": item["latency_sec"],
+        "error": item["error"],
+        "detection_summary": item["detection_summary"],
+    })
+
+
+@app.get("/api/detect/batch/{batch_id}/export")
+async def batch_export(batch_id: str, format: str = Query(default="json")):
+    job = _batch_jobs.get(batch_id)
+    if not job:
+        return JSONResponse({"error": "Batch not found"}, status_code=404)
+
+    if format == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["filename", "frame_index", "class_name", "display_name", "confidence", "x1", "y1", "x2", "y2"])
+        for item in job["items"]:
+            if item["status"] != "done":
+                continue
+            for frame in item["frames"]:
+                for det in frame["detections"]:
+                    writer.writerow([
+                        item["filename"],
+                        frame["frame_index"],
+                        det["class_name"],
+                        det.get("display_name", det["class_name"]),
+                        det["confidence"],
+                        det["xyxy"][0], det["xyxy"][1],
+                        det["xyxy"][2], det["xyxy"][3],
+                    ])
+        content = output.getvalue()
+        output.close()
+        filename = f"batch_{batch_id}_detections.csv"
+        return Response(
+            content=content,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # JSON format
+    export_data = {
+        "batch_id": batch_id,
+        "total_latency_sec": job["total_latency_sec"],
+        "items": [
+            {
+                "filename": item["filename"],
+                "status": item["status"],
+                "frame_count": item["frame_count"],
+                "fps": item["fps"],
+                "video_width": item["video_width"],
+                "video_height": item["video_height"],
+                "latency_sec": item["latency_sec"],
+                "detection_summary": item["detection_summary"],
+                "frames": item["frames"] if item["status"] == "done" else [],
+            }
+            for item in job["items"]
+        ],
+    }
+    content = json.dumps(export_data, ensure_ascii=False, indent=2)
+    filename = f"batch_{batch_id}_detections.json"
+    return Response(
+        content=content,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _batch_response(job: dict) -> dict:
+    return {
+        "batch_id": job["batch_id"],
+        "status": job["status"],
+        "total_latency_sec": job["total_latency_sec"],
+        "items": [
+            {
+                "filename": item["filename"],
+                "status": item["status"],
+                "frame_count": item["frame_count"],
+                "fps": item["fps"],
+                "video_width": item["video_width"],
+                "video_height": item["video_height"],
+                "latency_sec": item["latency_sec"],
+                "error": item.get("error", ""),
+                "detection_summary": item.get("detection_summary", {}),
+            }
+            for item in job["items"]
+        ],
+    }
 
 
 def _build_camera_list(include_credentials: bool = False) -> list[dict]:
