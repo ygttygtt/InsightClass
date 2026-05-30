@@ -84,32 +84,6 @@
         </label>
       </div>
 
-      <!-- Model & Params -->
-      <div class="sidebar-section params-section">
-        <div class="section-label">模型与参数</div>
-        <div class="param-row">
-          <label>模型
-            <button class="btn-set-default" id="btn-set-default" title="设为默认模型">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            </button>
-          </label>
-          <select id="model-select">
-            {% for exp in experiments %}
-            <option value="{{ exp.weights_path }}" {% if exp.weights_path == default_model %}selected{% endif %}>
-              {{ exp.experiment_id }}
-            </option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="param-row">
-          <label>置信度 <em id="conf-val">{{ default_confidence }}</em></label>
-          <input type="range" id="confidence" min="0.05" max="0.95" step="0.05" value="{{ default_confidence }}">
-        </div>
-        <div class="param-row">
-          <label>IoU <em id="iou-val">{{ default_iou }}</em></label>
-          <input type="range" id="iou" min="0.1" max="0.9" step="0.05" value="{{ default_iou }}">
-        </div>
-      </div>
     </div>
 
     <!-- RTSP Camera List Panel (scrollable, takes remaining space) -->
@@ -127,6 +101,33 @@
       </div>
       <div class="camera-list" id="camera-list">
         <div class="camera-loading">加载中...</div>
+      </div>
+    </div>
+
+    <!-- Model & Params (bottom) -->
+    <div class="sidebar-section params-section">
+      <div class="section-label">模型与参数</div>
+      <div class="param-row">
+        <label>模型
+          <button class="btn-set-default" id="btn-set-default" title="设为默认模型">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
+        </label>
+        <select id="model-select">
+          {% for exp in experiments %}
+          <option value="{{ exp.weights_path }}" {% if exp.weights_path == default_model %}selected{% endif %}>
+            {{ exp.experiment_id }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="param-row">
+        <label>置信度 <em id="conf-val">{{ default_confidence }}</em></label>
+        <input type="range" id="confidence" min="0.05" max="0.95" step="0.05" value="{{ default_confidence }}">
+      </div>
+      <div class="param-row">
+        <label>IoU <em id="iou-val">{{ default_iou }}</em></label>
+        <input type="range" id="iou" min="0.1" max="0.9" step="0.05" value="{{ default_iou }}">
       </div>
     </div>
   </aside>

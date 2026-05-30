@@ -50,7 +50,6 @@ body {
 /* ---- Sidebar Controls (top fixed section) ---- */
 .sidebar-controls {
   flex-shrink: 0;
-  max-height: 40vh;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--border-light) transparent;
