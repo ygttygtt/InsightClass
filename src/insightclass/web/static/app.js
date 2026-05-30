@@ -38,6 +38,7 @@ let _fileIdCounter = 0;
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 const esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+const escAttr = (s) => esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 // ---- Elements ----
 const els = {
@@ -115,8 +116,8 @@ function updateStats(detections, latencyMs) {
 }
 
 // ---- Canvas Drawing ----
-function drawDetections(detections, scaleX, scaleY) {
-  const ctx = els.ctx;
+function drawDetections(detections, scaleX, scaleY, ctx) {
+  ctx = ctx || els.ctx;
   const LINE_W = 2;
   const FONT_SIZE = 12;
   const FONT = `600 ${FONT_SIZE}px 'Noto Sans SC', sans-serif`;
@@ -308,7 +309,7 @@ function renderCameraList(cameras) {
       div.dataset.url = cam.rtsp_url;
       div.dataset.ip = cam.ip;
       const statusClass = cam._status || 'unknown';
-      const noteSpan = cam.note ? '<span class="cam-note" title="' + esc(cam.note) + '">' + esc(cam.note) + '</span>' : '';
+      const noteSpan = cam.note ? '<span class="cam-note" title="' + escAttr(cam.note) + '">' + esc(cam.note) + '</span>' : '';
       const editBtn = '<button class="cam-edit" data-ip="' + esc(cam.ip) + '" title="编辑">&#9998;</button>';
       const deleteBtn = cam.custom ? '<button class="cam-delete" data-ip="' + esc(cam.ip) + '" title="删除">&times;</button>' : '';
 
@@ -855,7 +856,9 @@ async function batchDetect() {
     detectFd.append('model', getModelPath());
     detectFd.append('confidence', getConfidence());
     detectFd.append('iou', getIou());
-    fetch(`/api/detect/batch/${state.batchId}`, { method: 'POST', body: detectFd }).catch(() => {});
+    fetch(`/api/detect/batch/${state.batchId}`, { method: 'POST', body: detectFd })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
+      .catch(e => { console.error('Batch detect start failed:', e); });
 
     // Step 3: Poll for progress
     await batchPollProgress();
@@ -1018,7 +1021,7 @@ function startPlaybackLoop() {
         if (dets.length > 0) {
           ctx.save();
           ctx.translate(dx, dy);
-          drawPlaybackDetections(ctx, dets, dw / vw, dh / vh);
+          drawDetections(dets, dw / vw, dh / vh, ctx);
           ctx.restore();
         }
       }
@@ -1033,36 +1036,6 @@ function startPlaybackLoop() {
     state.playbackAnimId = requestAnimationFrame(loop);
   }
   state.playbackAnimId = requestAnimationFrame(loop);
-}
-
-function drawPlaybackDetections(ctx, detections, scaleX, scaleY) {
-  const LINE_W = 2;
-  const FONT_SIZE = 12;
-  const FONT = `600 ${FONT_SIZE}px 'Noto Sans SC', sans-serif`;
-  const PAD = 4;
-  const LABEL_H = FONT_SIZE + PAD * 2;
-
-  for (const d of detections) {
-    const [x1, y1, x2, y2] = d.xyxy;
-    const rx1 = x1 * scaleX, ry1 = y1 * scaleY;
-    const rx2 = x2 * scaleX, ry2 = y2 * scaleY;
-    const w = rx2 - rx1, h = ry2 - ry1;
-    const color = COLORS[d.class_name] || '#888';
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth = LINE_W;
-    ctx.strokeRect(rx1, ry1, w, h);
-
-    const label = `${d.display_name || d.class_name} ${(d.confidence * 100).toFixed(0)}%`;
-    ctx.font = FONT;
-    const tm = ctx.measureText(label);
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.roundRect(rx1, ry1 - LABEL_H - PAD, tm.width + PAD * 2, LABEL_H + PAD, 3);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, rx1 + PAD, ry1 - PAD - 1);
-  }
 }
 
 // ============================================================
@@ -1403,7 +1376,7 @@ async function exportSelected() {
 }
 
 function downloadResults(results) {
-  let csv = '﻿filename,type,class_name,display_name,confidence,x1,y1,x2,y2\n';
+  let csv = '\uFEFFfilename,type,class_name,display_name,confidence,x1,y1,x2,y2\n';
   for (const r of results) {
     for (const d of (r.detections || [])) {
       const x1 = d.xyxy[0].toFixed(1), y1 = d.xyxy[1].toFixed(1);

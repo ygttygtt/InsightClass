@@ -4,9 +4,11 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import os
 import random
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -36,6 +38,8 @@ from insightclass.web.schemas import (
     VideoDetectionResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -58,8 +62,8 @@ DEFAULT_CAMERA_GROUPS = {
         "10.8.14.17", "10.8.14.11", "10.8.14.22", "10.8.14.24", "10.8.14.32",
     ],
 }
-DEFAULT_RTSP_USERNAME = "admin"
-DEFAULT_RTSP_PASSWORD = "1000phone"
+DEFAULT_RTSP_USERNAME = os.environ.get("RTSP_USERNAME", "admin")
+DEFAULT_RTSP_PASSWORD = os.environ.get("RTSP_PASSWORD", "1000phone")
 DEFAULT_RTSP_PORT = 554
 
 _rtsp_lock = threading.Lock()
@@ -122,11 +126,26 @@ class RtspStreamManager:
                 self._running = False
                 return
             self._status = "streaming"
+            fail_count = 0
             while self._running:
                 ret, frame = self._cap.read()
                 if not ret or frame is None:
-                    time.sleep(0.1)
+                    fail_count += 1
+                    if fail_count > 50:  # ~5 seconds of failures
+                        # Attempt reconnect
+                        self._cap.release()
+                        time.sleep(1)
+                        self._cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+                        if not self._cap.isOpened():
+                            self._status = "error"
+                            self._error = "摄像头连接中断，重连失败"
+                            self._running = False
+                            return
+                        fail_count = 0
+                    else:
+                        time.sleep(0.1)
                     continue
+                fail_count = 0
                 _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 with self._lock:
                     self._frame = buf.tobytes()
@@ -393,8 +412,8 @@ async def detect_frame(
             if results and len(results) > 0:
                 detections = _extract_detections(results[0], display_names)
                 h, w = results[0].orig_shape
-    except Exception:
-        pass  # No model — return empty detections
+    except Exception as exc:
+        logger.warning("detect_frame failed: %s", exc)
 
     latency = (time.time() - t0) * 1000
     return FrameDetectionResponse(
@@ -538,6 +557,18 @@ async def batch_detect(
     return JSONResponse({"ok": True, "status": "processing"})
 
 
+def _schedule_batch_cleanup(batch_id: str, delay_sec: int = 3600):
+    """Remove batch job and its temp dir after delay."""
+    def _cleanup():
+        time.sleep(delay_sec)
+        job = _batch_jobs.pop(batch_id, None)
+        if job:
+            tmp_dir = job.get("_dir")
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+    threading.Thread(target=_cleanup, daemon=True).start()
+
+
 def _batch_detect_worker(job: dict):
     """Background worker for batch detection — runs sequentially, updates status per item."""
     weights_path = job["_weights_path"]
@@ -599,6 +630,7 @@ def _batch_detect_worker(job: dict):
 
     job["status"] = "done"
     job["total_latency_sec"] = round(time.time() - t0, 2)
+    _schedule_batch_cleanup(job["batch_id"])
 
 
 @app.get("/api/detect/batch/{batch_id}")
@@ -905,7 +937,7 @@ async def stream_rtsp(rtsp_url: str):
 
     def generate():
         _stream_manager.start(rtsp_url)
-        while True:
+        while _stream_manager._running:
             frame = _stream_manager.get_frame()
             if frame:
                 yield (
@@ -972,8 +1004,8 @@ async def detect_rtsp(
             if results and len(results) > 0:
                 detections = _extract_detections(results[0], display_names)
                 h, w = results[0].orig_shape
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("detect_rtsp failed: %s", exc)
 
     # Record dashboard stats
     cam_ip = _extract_ip_from_rtsp(rtsp_url)
@@ -1085,4 +1117,4 @@ async def dashboard_history():
                 "standing": random.randint(0, max(1, base // 3)),
             })
         history[ip] = points
-    return JSONResponse({"history": history})
+    return JSONResponse({"history": history, "simulated": True})

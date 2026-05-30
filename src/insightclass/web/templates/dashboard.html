@@ -559,9 +559,7 @@ function initTrendData(data) {
     const current = data.total[cls] || 0;
     const arr = [];
     for (let h = 0; h < TREND_HOURS; h++) {
-      const base = current * (0.1 + 0.9 * (h / TREND_HOURS));
-      const noise = (Math.random() - 0.5) * current * 0.1;
-      arr.push(Math.max(0, Math.round(base + noise)));
+      arr.push(0);
     }
     trendHistory[cls] = arr;
   }
@@ -878,8 +876,17 @@ async function refresh() {
         const cam = cameras[i];
         const card = existingCards[i];
         if (card.dataset.ip !== cam.ip) {
-          grid.innerHTML = '';
-          refresh();
+          // IP order changed, rebuild all cards
+          let html = '';
+          for (let j = 0; j < cameras.length; j++) {
+            html += buildCardHTML(cameras[j], j);
+          }
+          grid.innerHTML = html;
+          grid.querySelectorAll('.cam-card').forEach(c => {
+            c.addEventListener('click', () => {
+              window.location.href = '/?camera=' + encodeURIComponent(c.dataset.ip);
+            });
+          });
           return;
         }
         const prevCam = prevCamStats[cam.ip];
