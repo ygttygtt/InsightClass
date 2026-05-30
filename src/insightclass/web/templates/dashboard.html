@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>深见课堂 · 智慧监控大屏</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e1a;--surface:#111827;--elevated:#1a2035;--border:#1e293b;
+  --text:#f1f5f9;--text2:#94a3b8;--text3:#64748b;
+  --accent:#6366f1;--cyan:#06b6d4;--green:#10b981;--red:#ef4444;--yellow:#eab308;--blue:#3b82f6;
+  --font:'Noto Sans SC',-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'JetBrains Mono','Menlo',monospace;
+}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+
+.dashboard{display:flex;flex-direction:column;height:100vh;padding:16px 24px;gap:16px}
+
+/* Header */
+.dash-header{display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.dash-title{font-size:22px;font-weight:700;letter-spacing:.02em}
+.dash-title span{background:linear-gradient(135deg,#818cf8,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.dash-actions{display:flex;gap:10px}
+.dash-btn{
+  display:flex;align-items:center;gap:6px;padding:8px 18px;
+  background:var(--elevated);color:var(--text2);border:1px solid var(--border);
+  border-radius:8px;font-size:13px;font-family:var(--font);cursor:pointer;transition:all .15s
+}
+.dash-btn:hover{background:#1e2744;color:var(--text);border-color:var(--accent)}
+.dash-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.dash-btn.primary:hover{background:#818cf8}
+.dash-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Summary Row */
+.summary-row{
+  display:grid;grid-template-columns:repeat(4,1fr) 120px 120px;gap:12px;flex-shrink:0
+}
+.summary-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:14px 18px;display:flex;align-items:center;gap:14px
+}
+.summary-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.summary-info{display:flex;flex-direction:column}
+.summary-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em}
+.summary-val{font-size:26px;font-weight:700;font-family:var(--mono)}
+
+.summary-stat-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:14px 18px;display:flex;flex-direction:column;align-items:center;justify-content:center
+}
+.summary-stat-label{font-size:11px;color:var(--text3);letter-spacing:.06em}
+.summary-stat-val{font-size:22px;font-weight:700;font-family:var(--mono)}
+
+/* Camera Grid */
+.camera-grid{
+  flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;
+  overflow-y:auto;align-content:start;padding-bottom:8px
+}
+.cam-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:16px;cursor:pointer;transition:all .2s;position:relative;display:flex;flex-direction:column;gap:10px
+}
+.cam-card:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 4px 20px rgba(99,102,241,.15)}
+.cam-card-header{display:flex;align-items:center;justify-content:space-between}
+.cam-card-name{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cam-card-ip{font-family:var(--mono);font-size:11px;color:var(--text3)}
+.cam-status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.cam-status-dot.online{background:var(--green);box-shadow:0 0 8px var(--green)}
+.cam-status-dot.offline{background:var(--red);box-shadow:0 0 8px var(--red)}
+
+.cam-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.cam-stat{
+  display:flex;align-items:center;gap:6px;padding:6px 8px;
+  background:var(--elevated);border-radius:6px;font-size:12px
+}
+.cam-stat-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.cam-stat-name{color:var(--text2);flex:1;font-size:11px}
+.cam-stat-num{font-weight:700;font-family:var(--mono);font-size:14px}
+
+.cam-card-footer{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text3)}
+.cam-card-time{font-family:var(--mono);font-size:10px}
+
+/* Animations */
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.cam-card{animation:fadeIn .3s ease both}
+
+/* Responsive */
+@media(max-width:1400px){.camera-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:1000px){.camera-grid{grid-template-columns:repeat(2,1fr)}.summary-row{grid-template-columns:repeat(2,1fr) 120px 120px}}
+@media(max-width:700px){.camera-grid{grid-template-columns:1fr}.summary-row{grid-template-columns:1fr 1fr}}
+
+/* Empty state */
+.empty-state{
+  grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:12px;padding:60px 0;color:var(--text3)
+}
+.empty-state svg{opacity:.3}
+.empty-state p{font-size:14px}
+
+/* Refresh indicator */
+.refresh-dot{
+  width:6px;height:6px;border-radius:50%;background:var(--green);
+  display:inline-block;margin-left:8px;animation:pulse 2s ease-in-out infinite
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="dashboard">
+  <div class="dash-header">
+    <div class="dash-title"><span>深见课堂</span> · 智慧监控大屏<span class="refresh-dot"></span></div>
+    <div class="dash-actions">
+      <button class="dash-btn primary" id="btn-report" title="生成今日报告">生成今日报告</button>
+      <button class="dash-btn" id="btn-back" title="返回主页">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        返回
+      </button>
+    </div>
+  </div>
+
+  <div class="summary-row" id="summary-row">
+    <div class="summary-card">
+      <div class="summary-dot" style="background:var(--red)"></div>
+      <div class="summary-info"><span class="summary-label">玩手机</span><span class="summary-val" id="total-phone_use">0</span></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-dot" style="background:var(--blue)"></div>
+      <div class="summary-info"><span class="summary-label">交谈</span><span class="summary-val" id="total-talking">0</span></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-dot" style="background:var(--yellow)"></div>
+      <div class="summary-info"><span class="summary-label">打瞌睡</span><span class="summary-val" id="total-sleeping">0</span></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-dot" style="background:var(--green)"></div>
+      <div class="summary-info"><span class="summary-label">站立</span><span class="summary-val" id="total-standing">0</span></div>
+    </div>
+    <div class="summary-stat-card">
+      <span class="summary-stat-label">在线摄像头</span>
+      <span class="summary-stat-val" id="online-count" style="color:var(--green)">0</span>
+    </div>
+    <div class="summary-stat-card">
+      <span class="summary-stat-label">摄像头总数</span>
+      <span class="summary-stat-val" id="total-cameras">0</span>
+    </div>
+  </div>
+
+  <div class="camera-grid" id="camera-grid"></div>
+</div>
+
+<script>
+const COLORS = {phone_use:'var(--red)',talking:'var(--blue)',sleeping:'var(--yellow)',standing:'var(--green)'};
+const LABELS = {phone_use:'玩手机',talking:'交谈',sleeping:'打瞌睡',standing:'站立'};
+const CLASSES = ['phone_use','talking','sleeping','standing'];
+
+let prevValues = {};
+
+function animateValue(el, newVal) {
+  const oldVal = parseInt(el.textContent) || 0;
+  if (newVal === oldVal) return;
+  el.textContent = newVal;
+  el.style.transition = 'none';
+  el.style.color = newVal > oldVal ? '#fff' : '';
+  el.style.transform = 'scale(1.2)';
+  requestAnimationFrame(() => {
+    el.style.transition = 'all .3s ease';
+    el.style.transform = 'scale(1)';
+  });
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/dashboard/stats');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    // Summary
+    for (const cls of CLASSES) {
+      const el = document.getElementById('total-' + cls);
+      if (el) animateValue(el, data.total[cls] || 0);
+    }
+    animateValue(document.getElementById('online-count'), data.online_count || 0);
+    animateValue(document.getElementById('total-cameras'), data.total_cameras || 0);
+
+    // Camera cards
+    const grid = document.getElementById('camera-grid');
+    const cameras = data.cameras || [];
+
+    if (cameras.length === 0) {
+      grid.innerHTML = '<div class="empty-state"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg><p>暂无摄像头配置</p></div>';
+      return;
+    }
+
+    // Build cards HTML
+    let html = '';
+    for (let i = 0; i < cameras.length; i++) {
+      const cam = cameras[i];
+      const onlineClass = cam.online ? 'online' : 'offline';
+      const statusText = cam.online ? '在线' : '离线';
+      const timeStr = cam.last_update ? cam.last_update.replace('T', ' ') : '--';
+
+      let statsHtml = '';
+      for (const cls of CLASSES) {
+        const val = cam.stats[cls] || 0;
+        statsHtml += '<div class="cam-stat"><span class="cam-stat-dot" style="background:' + COLORS[cls] + '"></span><span class="cam-stat-name">' + LABELS[cls] + '</span><span class="cam-stat-num" data-ip="' + cam.ip + '" data-cls="' + cls + '">' + val + '</span></div>';
+      }
+
+      html += '<div class="cam-card" data-ip="' + cam.ip + '" style="animation-delay:' + (i * 40) + 'ms">' +
+        '<div class="cam-card-header"><div><div class="cam-card-name">' + esc(cam.name || cam.ip) + '</div><div class="cam-card-ip">' + esc(cam.ip) + '</div></div><span class="cam-status-dot ' + onlineClass + '" title="' + statusText + '"></span></div>' +
+        '<div class="cam-stats">' + statsHtml + '</div>' +
+        '<div class="cam-card-footer"><span>' + statusText + '</span><span class="cam-card-time">' + timeStr + '</span></div>' +
+        '</div>';
+    }
+    grid.innerHTML = html;
+
+    // Bind click events
+    grid.querySelectorAll('.cam-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const ip = card.dataset.ip;
+        window.location.href = '/?camera=' + encodeURIComponent(ip);
+      });
+    });
+  } catch (e) {
+    console.error('Dashboard refresh error:', e);
+  }
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// Report download
+document.getElementById('btn-report').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-report');
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  try {
+    const res = await fetch('/api/dashboard/report', { method: 'POST' });
+    if (!res.ok) throw new Error('生成失败');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'dashboard_report_' + new Date().toISOString().slice(0,10) + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('报告生成失败: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = '生成今日报告';
+});
+
+// Back button
+document.getElementById('btn-back').addEventListener('click', () => {
+  window.location.href = '/';
+});
+
+// Initial load + auto-refresh every 5s
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

@@ -69,47 +69,6 @@
       <div class="camera-list" id="camera-list">
         <div class="camera-loading">加载中...</div>
       </div>
-      <!-- Add Camera Form (hidden by default) -->
-      <div class="cam-form-wrapper hidden" id="cam-form-wrapper">
-        <div class="cam-form">
-          <div class="cam-form-header">
-            <span id="cam-form-title">添加摄像头</span>
-            <button class="cam-form-close" id="cam-form-close">&times;</button>
-          </div>
-          <div class="cam-form-body">
-            <div class="cam-field">
-              <label>IP 地址 <span class="required">*</span></label>
-              <input type="text" id="cam-ip" placeholder="192.168.1.100">
-            </div>
-            <div class="cam-field">
-              <label>别名</label>
-              <input type="text" id="cam-name" placeholder="如：教室A前摄像头">
-            </div>
-            <div class="cam-form-row">
-              <div class="cam-field">
-                <label>用户名</label>
-                <input type="text" id="cam-username" placeholder="admin">
-              </div>
-              <div class="cam-field">
-                <label>密码</label>
-                <input type="password" id="cam-password" placeholder="password">
-              </div>
-            </div>
-            <div class="cam-field">
-              <label>端口</label>
-              <input type="number" id="cam-port" value="554" placeholder="554">
-            </div>
-            <div class="cam-field">
-              <label>备注</label>
-              <input type="text" id="cam-note" placeholder="教室名称或位置描述">
-            </div>
-          </div>
-          <div class="cam-form-footer">
-            <button class="cam-btn cam-btn-cancel" id="cam-form-cancel">取消</button>
-            <button class="cam-btn cam-btn-save" id="cam-form-save">保存</button>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- Webcam Panel -->
@@ -139,11 +98,6 @@
         <span>拖拽或点击上传视频</span>
         <em>MP4 / AVI / MOV · 选择后即时预览</em>
       </label>
-      <button class="btn-action" id="btn-export-video" disabled>导出标注视频</button>
-      <div class="batch-export-row hidden" id="batch-export-row">
-        <button class="btn-export" id="btn-export-csv" title="导出 CSV">CSV</button>
-        <button class="btn-export" id="btn-export-json" title="导出 JSON">JSON</button>
-      </div>
     </div>
 
     <!-- Model & Params -->
@@ -183,6 +137,10 @@
         <span class="header-badge" id="source-label">RTSP 监控</span>
       </div>
       <div class="header-actions">
+        <button class="btn-ctrl" id="btn-dashboard" title="打开监控大屏" onclick="window.open('/dashboard','_blank')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          大屏
+        </button>
         <button class="btn-ctrl btn-start" id="btn-start" title="开始检测">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
           开始
@@ -267,8 +225,20 @@
 <!-- File List Panel -->
 <div id="file-panel" class="file-panel">
   <div class="file-panel-header">
-    <span class="file-panel-title">文件列表 <span class="file-panel-count" id="file-panel-count">0</span></span>
-    <button class="file-panel-close" id="file-panel-close">&times;</button>
+    <div class="file-panel-tabs">
+      <button class="file-tab active" data-tab="image">图片</button>
+      <button class="file-tab" data-tab="video">视频</button>
+      <span class="file-panel-count" id="file-panel-count">0</span>
+    </div>
+    <div class="file-panel-header-actions">
+      <button class="file-panel-action-btn" id="btn-select-mode" title="选择">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+      </button>
+      <button class="file-panel-action-btn" id="btn-clear-files" title="清空">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+      </button>
+      <button class="file-panel-close" id="file-panel-close">&times;</button>
+    </div>
   </div>
   <div class="file-panel-body" id="file-panel-body">
     <div class="file-panel-empty">暂无文件</div>
@@ -283,6 +253,49 @@
   </div>
 </div>
 <div class="file-panel-overlay hidden" id="file-panel-overlay"></div>
+
+<!-- Camera Modal -->
+<div id="cam-modal" class="cam-modal hidden">
+  <div class="cam-modal-backdrop"></div>
+  <div class="cam-modal-dialog">
+    <div class="cam-modal-header">
+      <span id="cam-modal-title">添加摄像头</span>
+      <button class="cam-modal-close" id="cam-modal-close">&times;</button>
+    </div>
+    <div class="cam-modal-body">
+      <div class="cam-field">
+        <label>IP 地址 <span class="required">*</span></label>
+        <input type="text" id="cam-ip" placeholder="192.168.1.100">
+      </div>
+      <div class="cam-field">
+        <label>别名</label>
+        <input type="text" id="cam-name" placeholder="如：教室A前摄像头">
+      </div>
+      <div class="cam-form-row">
+        <div class="cam-field">
+          <label>用户名</label>
+          <input type="text" id="cam-username" placeholder="admin">
+        </div>
+        <div class="cam-field">
+          <label>密码</label>
+          <input type="password" id="cam-password" placeholder="password">
+        </div>
+      </div>
+      <div class="cam-field">
+        <label>端口</label>
+        <input type="number" id="cam-port" value="554" placeholder="554">
+      </div>
+      <div class="cam-field">
+        <label>备注</label>
+        <input type="text" id="cam-note" placeholder="教室名称或位置描述">
+      </div>
+    </div>
+    <div class="cam-modal-footer">
+      <button class="cam-btn cam-btn-cancel" id="cam-form-cancel">取消</button>
+      <button class="cam-btn cam-btn-save" id="cam-form-save">保存</button>
+    </div>
+  </div>
+</div>
 
 <script>
 window.DISPLAY_NAMES = {{ display_names | tojson }};

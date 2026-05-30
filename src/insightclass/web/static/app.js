@@ -29,6 +29,8 @@ const state = {
   fileList: [],
   activeFileId: null,
   filePanelOpen: false,
+  filePanelTab: 'image',
+  selectionMode: false,
 };
 
 let _fileIdCounter = 0;
@@ -70,6 +72,8 @@ const els = {
   fileExportProgress: $('#file-export-progress'),
   fileExportBarFill: $('#file-export-bar-fill'),
   fileExportText: $('#file-export-text'),
+  btnSelectMode: $('#btn-select-mode'),
+  btnClearFiles: $('#btn-clear-files'),
 };
 
 // ---- Utility ----
@@ -176,6 +180,8 @@ function switchSource(source) {
   stopAll();
   closeFilePanel();
   state.source = source;
+  state.filePanelTab = source === 'video' ? 'video' : 'image';
+  state.selectionMode = false;
   els.sourceLabel.textContent = SOURCE_LABELS[source] || source;
 
   $$('.source-btn').forEach(b => b.classList.toggle('active', b.dataset.source === source));
@@ -212,6 +218,15 @@ async function loadCameras() {
     const cameras = await res.json();
     state.cameras = cameras;
     renderCameraList(cameras);
+    // Auto-select camera from query param (e.g. /?camera=10.8.14.36)
+    const params = new URLSearchParams(window.location.search);
+    const targetIp = params.get('camera');
+    if (targetIp) {
+      const items = $$('.camera-item');
+      items.forEach(el => {
+        if (el.dataset.ip === targetIp) el.click();
+      });
+    }
   } catch (e) {
     console.error('Camera list error:', e);
     $('#camera-list').innerHTML = '<div class="camera-loading">加载失败，请检查服务是否正常运行</div>';
@@ -275,6 +290,7 @@ function renderCameraList(cameras) {
       div.dataset.ip = cam.ip;
       const statusClass = cam._status || 'unknown';
       const noteSpan = cam.note ? '<span class="cam-note" title="' + esc(cam.note) + '">' + esc(cam.note) + '</span>' : '';
+      const editBtn = '<button class="cam-edit" data-ip="' + esc(cam.ip) + '" title="编辑">&#9998;</button>';
       const deleteBtn = cam.custom ? '<button class="cam-delete" data-ip="' + esc(cam.ip) + '" title="删除">&times;</button>' : '';
 
       // Build name/ip display
@@ -285,11 +301,18 @@ function renderCameraList(cameras) {
         infoHtml = '<div class="cam-info"><span class="cam-ip-only">' + esc(cam.ip) + '</span></div>';
       }
 
-      div.innerHTML = '<span class="cam-dot"></span>' + infoHtml + noteSpan + '<span class="cam-status ' + esc(statusClass) + '"></span>' + deleteBtn;
+      div.innerHTML = '<span class="cam-dot"></span>' + infoHtml + noteSpan + '<span class="cam-status ' + esc(statusClass) + '"></span>' + editBtn + deleteBtn;
       div.addEventListener('click', (e) => {
-        if (e.target.classList.contains('cam-delete')) return;
+        if (e.target.classList.contains('cam-delete') || e.target.classList.contains('cam-edit')) return;
         selectCamera(div, cam);
       });
+      const edBtn = div.querySelector('.cam-edit');
+      if (edBtn) {
+        edBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openEditCamera(cam);
+        });
+      }
       const delBtn = div.querySelector('.cam-delete');
       if (delBtn) {
         delBtn.addEventListener('click', (e) => {
@@ -1072,7 +1095,16 @@ async function addFilesToList(fileInput) {
     });
   }
   updateFileCountBadge();
+  // Auto-switch tab to match uploaded file types
+  if (newEntries.length > 0) {
+    const hasVideo = newEntries.some(e => e.type === 'video');
+    const hasImage = newEntries.some(e => e.type === 'image');
+    if (hasVideo && !hasImage) state.filePanelTab = 'video';
+    else if (hasImage && !hasVideo) state.filePanelTab = 'image';
+  }
   renderFilePanel();
+  // Auto-open panel
+  if (!state.filePanelOpen) toggleFilePanel();
   // Auto-preview first new file
   if (newEntries.length > 0) {
     previewFile(newEntries[0]);
@@ -1122,18 +1154,31 @@ async function previewFile(entry) {
 function renderFilePanel() {
   const body = els.filePanelBody;
   const countEl = els.filePanelCount;
-  const list = state.fileList;
-  countEl.textContent = list.length;
 
-  if (list.length === 0) {
-    body.innerHTML = '<div class="file-panel-empty">暂无文件</div>';
+  // Update tab UI
+  $$('.file-tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.tab === state.filePanelTab);
+  });
+
+  // Update select mode button
+  if (els.btnSelectMode) {
+    els.btnSelectMode.classList.toggle('active', state.selectionMode);
+    els.btnSelectMode.title = state.selectionMode ? '退出选择' : '选择';
+  }
+
+  // Filter by current tab
+  const filteredList = state.fileList.filter(f => f.type === state.filePanelTab);
+  countEl.textContent = filteredList.length;
+
+  if (filteredList.length === 0) {
+    body.innerHTML = '<div class="file-panel-empty">暂无' + (state.filePanelTab === 'video' ? '视频' : '图片') + '文件</div>';
     updateExportSelectedBtn();
     return;
   }
 
   const statusLabels = { pending: '待处理', detecting: '检测中', done: '已完成', error: '失败' };
   let html = '<div class="file-grid">';
-  for (const entry of list) {
+  for (const entry of filteredList) {
     const activeClass = entry.id === state.activeFileId ? ' active' : '';
     const thumbHtml = entry.thumbnailUrl
       ? `<img src="${esc(entry.thumbnailUrl)}" alt="">`
@@ -1142,8 +1187,8 @@ function renderFilePanel() {
       <div class="file-card-thumb">
         <input type="checkbox" class="file-card-checkbox" data-id="${entry.id}" ${entry.selected ? 'checked' : ''}>
         ${thumbHtml}
-        <span class="file-card-type-badge">${entry.type === 'video' ? '视频' : '图片'}</span>
       </div>
+      <button class="file-card-remove" data-id="${entry.id}" title="移除">&times;</button>
       <div class="file-card-info">
         <div class="file-card-name" title="${esc(entry.name)}">${esc(entry.name)}</div>
         <div class="file-card-meta">
@@ -1160,9 +1205,18 @@ function renderFilePanel() {
   body.querySelectorAll('.file-card').forEach(card => {
     card.addEventListener('click', (e) => {
       if (e.target.classList.contains('file-card-checkbox')) return;
+      if (e.target.classList.contains('file-card-remove')) return;
       const id = parseInt(card.dataset.id);
       const entry = state.fileList.find(f => f.id === id);
-      if (entry) previewFile(entry);
+      if (!entry) return;
+      if (state.selectionMode) {
+        entry.selected = !entry.selected;
+        const cb = card.querySelector('.file-card-checkbox');
+        if (cb) cb.checked = entry.selected;
+        updateExportSelectedBtn();
+      } else {
+        previewFile(entry);
+      }
     });
   });
   body.querySelectorAll('.file-card-checkbox').forEach(cb => {
@@ -1172,6 +1226,12 @@ function renderFilePanel() {
       const entry = state.fileList.find(f => f.id === id);
       if (entry) entry.selected = cb.checked;
       updateExportSelectedBtn();
+    });
+  });
+  body.querySelectorAll('.file-card-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeFile(parseInt(btn.dataset.id));
     });
   });
 
@@ -1201,6 +1261,46 @@ function closeFilePanel() {
   state.filePanelOpen = false;
   els.filePanel.classList.remove('open');
   els.filePanelOverlay.classList.add('hidden');
+}
+
+function switchFileTab(tab) {
+  state.filePanelTab = tab;
+  renderFilePanel();
+}
+
+function toggleSelectionMode() {
+  state.selectionMode = !state.selectionMode;
+  renderFilePanel();
+}
+
+function clearAllFiles() {
+  if (state.fileList.length === 0) return;
+  if (!confirm('确定清空所有文件？')) return;
+  // Revoke thumbnail URLs
+  state.fileList.forEach(f => { if (f.thumbnailUrl) URL.revokeObjectURL(f.thumbnailUrl); });
+  state.fileList = [];
+  state.activeFileId = null;
+  state.batchFiles = [];
+  state.batchId = null;
+  state.batchItems = [];
+  updateFileCountBadge();
+  renderFilePanel();
+  showPlaceholder();
+}
+
+function removeFile(id) {
+  const idx = state.fileList.findIndex(f => f.id === id);
+  if (idx === -1) return;
+  const entry = state.fileList[idx];
+  if (entry.thumbnailUrl) URL.revokeObjectURL(entry.thumbnailUrl);
+  // Remove from batchFiles if present
+  const batchIdx = state.batchFiles.indexOf(entry.file);
+  if (batchIdx !== -1) state.batchFiles.splice(batchIdx, 1);
+  state.fileList.splice(idx, 1);
+  if (state.activeFileId === id) state.activeFileId = null;
+  updateFileCountBadge();
+  renderFilePanel();
+  if (state.fileList.length === 0) showPlaceholder();
 }
 
 async function exportSelected() {
@@ -1431,19 +1531,50 @@ $('#btn-set-default').addEventListener('click', async () => {
 });
 
 // ---- Camera Management ----
-function showCameraForm() {
-  $('#cam-form-wrapper').classList.remove('hidden');
-  $('#cam-ip').value = '';
-  $('#cam-name').value = '';
-  $('#cam-username').value = '';
-  $('#cam-password').value = '';
-  $('#cam-port').value = '554';
-  $('#cam-note').value = '';
-  $('#cam-ip').focus();
+let _camEditIp = null; // null = add mode, string = edit mode
+let _camEditDefault = false; // true if editing a default (non-custom) camera
+
+async function openEditCamera(cam) {
+  // For default cameras, we may not have credentials — fill with defaults
+  showCameraModal(cam);
+  _camEditDefault = !cam.custom;
 }
 
-function hideCameraForm() {
-  $('#cam-form-wrapper').classList.add('hidden');
+function showCameraModal(cam) {
+  const modal = $('#cam-modal');
+  const title = $('#cam-modal-title');
+  const ipInput = $('#cam-ip');
+  if (cam) {
+    _camEditIp = cam.ip;
+    title.textContent = '编辑摄像头';
+    ipInput.value = cam.ip;
+    ipInput.disabled = true;
+    ipInput.style.opacity = '0.5';
+    $('#cam-name').value = cam.name || '';
+    $('#cam-username').value = cam.username || 'admin';
+    $('#cam-password').value = cam.password || '';
+    $('#cam-port').value = cam.port || 554;
+    $('#cam-note').value = cam.note || '';
+  } else {
+    _camEditIp = null;
+    title.textContent = '添加摄像头';
+    ipInput.value = '';
+    ipInput.disabled = false;
+    ipInput.style.opacity = '';
+    $('#cam-name').value = '';
+    $('#cam-username').value = '';
+    $('#cam-password').value = '';
+    $('#cam-port').value = '554';
+    $('#cam-note').value = '';
+  }
+  modal.classList.remove('hidden');
+  if (!cam) ipInput.focus();
+}
+
+function hideCameraModal() {
+  $('#cam-modal').classList.add('hidden');
+  _camEditIp = null;
+  _camEditDefault = false;
 }
 
 async function saveCameraForm() {
@@ -1458,17 +1589,26 @@ async function saveCameraForm() {
     note: $('#cam-note').value.trim(),
   };
   try {
-    const res = await fetch('/api/cameras', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    let res;
+    if (_camEditIp) {
+      res = await fetch('/api/cameras/' + encodeURIComponent(_camEditIp), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } else {
+      res = await fetch('/api/cameras', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
     if (!res.ok) {
       const err = await res.json();
       alert(err.error || '保存失败');
       return;
     }
-    hideCameraForm();
+    hideCameraModal();
     loadCameras();
   } catch (e) {
     alert('保存失败: ' + e.message);
@@ -1511,14 +1651,19 @@ async function testCameraConnectivity() {
 }
 
 // ---- Camera Management Events ----
-$('#btn-add-camera').addEventListener('click', showCameraForm);
+$('#btn-add-camera').addEventListener('click', () => showCameraModal(null));
 $('#btn-test-cameras').addEventListener('click', testCameraConnectivity);
-$('#cam-form-close').addEventListener('click', hideCameraForm);
-$('#cam-form-cancel').addEventListener('click', hideCameraForm);
+$('#cam-modal-close').addEventListener('click', hideCameraModal);
+$('#cam-form-cancel').addEventListener('click', hideCameraModal);
 $('#cam-form-save').addEventListener('click', saveCameraForm);
-$('#cam-form-wrapper').addEventListener('keydown', (e) => {
+$('#cam-modal .cam-modal-backdrop').addEventListener('click', hideCameraModal);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#cam-modal').classList.contains('hidden')) {
+    hideCameraModal();
+  }
+});
+$('#cam-modal').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') saveCameraForm();
-  if (e.key === 'Escape') hideCameraForm();
 });
 
 // ---- File Panel Events ----
@@ -1528,9 +1673,14 @@ els.filePanelOverlay.addEventListener('click', closeFilePanel);
 els.btnExportSelected.addEventListener('click', exportSelected);
 els.fileSelectAll.addEventListener('change', () => {
   const checked = els.fileSelectAll.checked;
-  state.fileList.forEach(f => f.selected = checked);
+  state.fileList.filter(f => f.type === state.filePanelTab).forEach(f => f.selected = checked);
   renderFilePanel();
 });
+$$('.file-tab').forEach(tab => {
+  tab.addEventListener('click', () => switchFileTab(tab.dataset.tab));
+});
+els.btnSelectMode.addEventListener('click', toggleSelectionMode);
+els.btnClearFiles.addEventListener('click', clearAllFiles);
 
 // ---- Init ----
 loadCameras();

@@ -142,6 +142,49 @@ _stream_manager = RtspStreamManager()
 _batch_jobs: dict[str, dict] = {}
 
 
+# ---- Dashboard Stats (in-memory) ----
+
+class DashboardStats:
+    """Tracks per-camera detection counts in memory."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._cameras: dict[str, dict] = {}  # ip -> {stats, last_update}
+
+    def record(self, ip: str, class_name: str):
+        with self._lock:
+            if ip not in self._cameras:
+                self._cameras[ip] = {
+                    "stats": {"phone_use": 0, "talking": 0, "sleeping": 0, "standing": 0},
+                    "last_update": None,
+                }
+            cam = self._cameras[ip]
+            if class_name in cam["stats"]:
+                cam["stats"][class_name] += 1
+            cam["last_update"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    def get_all(self) -> dict:
+        with self._lock:
+            cameras = []
+            total = {"phone_use": 0, "talking": 0, "sleeping": 0, "standing": 0}
+            for ip, data in self._cameras.items():
+                cameras.append({
+                    "ip": ip,
+                    "stats": dict(data["stats"]),
+                    "last_update": data["last_update"],
+                })
+                for k in total:
+                    total[k] += data["stats"].get(k, 0)
+            return {"cameras": cameras, "total": total}
+
+    def reset(self):
+        with self._lock:
+            self._cameras.clear()
+
+
+_dashboard_stats = DashboardStats()
+
+
 def _validate_weights_path(path: str) -> str:
     """Restrict model paths to experiments directory."""
     p = Path(path).resolve()
@@ -670,16 +713,26 @@ def _batch_response(job: dict) -> dict:
 
 
 def _build_camera_list(include_credentials: bool = False) -> list[dict]:
+    # Build a lookup of custom camera entries by IP for alias merging
+    custom_cameras = _load_custom_cameras()
+    custom_by_ip = {c["ip"]: c for c in custom_cameras}
+
+    # Set of all default camera IPs for filtering
+    default_ips = set()
+    for ips in DEFAULT_CAMERA_GROUPS.values():
+        default_ips.update(ips)
+
     cameras = []
     for group, ips in DEFAULT_CAMERA_GROUPS.items():
         for ip in ips:
+            custom = custom_by_ip.get(ip)
             cam = {
                 "ip": ip,
-                "name": "",
+                "name": custom.get("name", "") if custom else "",
                 "group": group,
                 "group_label": "前视角" if group == "front" else "后视角",
                 "rtsp_url": _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT),
-                "note": "",
+                "note": custom.get("note", "") if custom else "",
                 "custom": False,
             }
             if include_credentials:
@@ -687,7 +740,10 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
                 cam["password"] = DEFAULT_RTSP_PASSWORD
                 cam["port"] = DEFAULT_RTSP_PORT
             cameras.append(cam)
-    for cam in _load_custom_cameras():
+    for cam in custom_cameras:
+        # Skip custom entries that are just alias overrides for default cameras
+        if cam["ip"] in default_ips:
+            continue
         entry = {
             "ip": cam["ip"],
             "name": cam.get("name", ""),
@@ -716,6 +772,12 @@ async def add_camera(request: Request):
     ip = body.get("ip", "").strip()
     if not ip:
         return JSONResponse({"error": "IP is required"}, status_code=400)
+    # Check if IP is a default camera
+    default_ips = set()
+    for ips in DEFAULT_CAMERA_GROUPS.values():
+        default_ips.update(ips)
+    if ip in default_ips:
+        return JSONResponse({"error": f"Camera {ip} is a built-in camera, use edit to change its alias"}, status_code=409)
     cameras = _load_custom_cameras()
     if any(c["ip"] == ip for c in cameras):
         return JSONResponse({"error": f"Camera {ip} already exists"}, status_code=409)
@@ -737,15 +799,35 @@ async def update_camera(ip: str, request: Request):
     body = await request.json()
     cameras = _load_custom_cameras()
     idx = next((i for i, c in enumerate(cameras) if c["ip"] == ip), None)
-    if idx is None:
+
+    # Check if this is a default camera (not yet in custom list)
+    default_ips = set()
+    for ips in DEFAULT_CAMERA_GROUPS.values():
+        default_ips.update(ips)
+    is_default = ip in default_ips
+
+    if idx is not None:
+        # Update existing custom entry
+        cameras[idx].update({
+            "name": body.get("name", cameras[idx].get("name", "")),
+            "username": body.get("username", cameras[idx].get("username", DEFAULT_RTSP_USERNAME)),
+            "password": body.get("password", cameras[idx].get("password", DEFAULT_RTSP_PASSWORD)),
+            "port": body.get("port", cameras[idx].get("port", DEFAULT_RTSP_PORT)),
+            "note": body.get("note", cameras[idx].get("note", "")),
+        })
+    elif is_default:
+        # Create a custom entry to store alias/overrides for a default camera
+        cameras.append({
+            "ip": ip,
+            "name": body.get("name", ""),
+            "username": body.get("username", DEFAULT_RTSP_USERNAME),
+            "password": body.get("password", DEFAULT_RTSP_PASSWORD),
+            "port": body.get("port", DEFAULT_RTSP_PORT),
+            "note": body.get("note", ""),
+        })
+    else:
         return JSONResponse({"error": "Camera not found"}, status_code=404)
-    cameras[idx].update({
-        "name": body.get("name", cameras[idx].get("name", "")),
-        "username": body.get("username", cameras[idx].get("username", DEFAULT_RTSP_USERNAME)),
-        "password": body.get("password", cameras[idx].get("password", DEFAULT_RTSP_PASSWORD)),
-        "port": body.get("port", cameras[idx].get("port", DEFAULT_RTSP_PORT)),
-        "note": body.get("note", cameras[idx].get("note", "")),
-    })
+
     _save_custom_cameras(cameras)
     return JSONResponse({"ok": True}, media_type="application/json; charset=utf-8")
 
@@ -869,10 +951,87 @@ async def detect_rtsp(
     except Exception:
         pass
 
+    # Record dashboard stats
+    cam_ip = _extract_ip_from_rtsp(rtsp_url)
+    for det in detections:
+        _dashboard_stats.record(cam_ip, det.class_name)
+
     latency = (time.time() - t0) * 1000
     return FrameDetectionResponse(
         detections=detections,
         latency_ms=round(latency, 1),
         frame_width=int(w),
         frame_height=int(h),
+    )
+
+
+def _extract_ip_from_rtsp(url: str) -> str:
+    """Extract IP address from rtsp://user:pass@IP:port/... URL."""
+    try:
+        after_at = url.split("@", 1)[1] if "@" in url else url.split("//", 1)[1]
+        return after_at.split(":")[0].split("/")[0]
+    except Exception:
+        return "unknown"
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    return templates.TemplateResponse(request=request, name="dashboard.html")
+
+
+@app.get("/api/dashboard/stats")
+async def dashboard_stats():
+    raw = _dashboard_stats.get_all()
+    cameras = _build_camera_list()
+    # Build a lookup from raw stats by IP
+    stats_by_ip = {c["ip"]: c for c in raw["cameras"]}
+    result_cameras = []
+    for cam in cameras:
+        ip = cam["ip"]
+        data = stats_by_ip.get(ip, {"stats": {"phone_use": 0, "talking": 0, "sleeping": 0, "standing": 0}, "last_update": None})
+        result_cameras.append({
+            "ip": ip,
+            "name": cam.get("name") or cam.get("group_label", ""),
+            "online": cam.get("_status", "unknown") == "connected",
+            "stats": data["stats"],
+            "last_update": data["last_update"],
+        })
+    return JSONResponse({
+        "cameras": result_cameras,
+        "total": raw["total"],
+        "online_count": sum(1 for c in result_cameras if c["online"]),
+        "total_cameras": len(result_cameras),
+    })
+
+
+@app.get("/api/dashboard/report")
+async def dashboard_report_get():
+    return await _generate_report()
+
+
+@app.post("/api/dashboard/report")
+async def dashboard_report_post():
+    return await _generate_report()
+
+
+async def _generate_report():
+    raw = _dashboard_stats.get_all()
+    cameras = _build_camera_list()
+    stats_by_ip = {c["ip"]: c for c in raw["cameras"]}
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["camera_ip", "camera_name", "phone_use", "talking", "sleeping", "standing", "total", "timestamp"])
+    for cam in cameras:
+        ip = cam["ip"]
+        data = stats_by_ip.get(ip, {"stats": {"phone_use": 0, "talking": 0, "sleeping": 0, "standing": 0}, "last_update": ""})
+        s = data["stats"]
+        total = sum(s.values())
+        writer.writerow([ip, cam.get("name", ""), s["phone_use"], s["talking"], s["sleeping"], s["standing"], total, data["last_update"] or ""])
+    content = output.getvalue()
+    output.close()
+    filename = f"dashboard_report_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
