@@ -5,6 +5,7 @@ import csv
 import io
 import json
 import os
+import random
 import re
 import tempfile
 import threading
@@ -1048,3 +1049,28 @@ async def _generate_report():
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/api/dashboard/history")
+async def dashboard_history():
+    """Return 24h simulated historical data per camera for chart display."""
+    cameras = _build_camera_list()
+    now = time.time()
+    history: dict[str, list] = {}
+    for cam in cameras:
+        ip = cam["ip"]
+        points = []
+        for h in range(24):
+            t = now - (23 - h) * 3600
+            hour = time.localtime(t).tm_hour
+            # More activity during class hours (8-18)
+            base = random.randint(2, 15) if 8 <= hour <= 18 else random.randint(0, 3)
+            points.append({
+                "time": time.strftime("%Y-%m-%dT%H:00:00", time.localtime(t)),
+                "phone_use": random.randint(0, base),
+                "talking": random.randint(0, base),
+                "sleeping": random.randint(0, max(1, base // 2)),
+                "standing": random.randint(0, max(1, base // 3)),
+            })
+        history[ip] = points
+    return JSONResponse({"history": history})

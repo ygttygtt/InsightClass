@@ -44,6 +44,12 @@ body {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- Sidebar Controls (top fixed section) ---- */
+.sidebar-controls {
+  flex-shrink: 0;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--border-light) transparent;
@@ -132,12 +138,16 @@ body {
 
 /* ---- Camera List ---- */
 .camera-list {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 0;
-  max-height: calc(100vh - 480px);
-  min-height: 80px;
+  min-height: 0;
   overflow-y: auto;
+  scroll-behavior: smooth;
+  padding: 0 12px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-light) transparent;
 }
 .camera-loading {
   font-size: 12px;
@@ -148,8 +158,8 @@ body {
 .cam-group-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 8px;
+  padding: 10px 10px;
   cursor: pointer;
   user-select: none;
   transition: background .15s;
@@ -193,18 +203,18 @@ body {
   opacity: 0;
 }
 .cam-group-items .camera-item {
-  padding-left: 22px;
+  padding-left: 26px;
 }
 /* ---- Camera Item ---- */
 .camera-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: 10px;
+  padding: 12px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all .15s;
-  font-size: 13px;
+  font-size: 14px;
 }
 .camera-item:hover { background: var(--bg-hover); }
 .camera-item.active {
@@ -212,21 +222,23 @@ body {
   border: 1px solid rgba(99, 102, 241, .3);
 }
 .camera-item .cam-dot {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--text-muted);
   flex-shrink: 0;
 }
-.camera-item.active .cam-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.camera-item.active .cam-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
 .camera-item .cam-info {
   display: flex;
   flex-direction: column;
   min-width: 0;
   flex: 1;
+  gap: 2px;
 }
 .camera-item .cam-name {
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -234,33 +246,33 @@ body {
 }
 .camera-item .cam-ip {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 .camera-item .cam-ip-only {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 .camera-item .cam-group { display: none; }
 .camera-item .cam-note {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-muted);
-  max-width: 60px;
+  max-width: 70px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 0;
 }
 .camera-item .cam-status {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
   margin-left: 2px;
 }
-.camera-item .cam-status.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
-.camera-item .cam-status.disconnected { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.camera-item .cam-status.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.camera-item .cam-status.disconnected { background: var(--red); box-shadow: 0 0 8px var(--red); }
 .camera-item .cam-status.unknown { background: var(--text-muted); }
 .camera-item .cam-delete {
   display: none;
@@ -268,14 +280,14 @@ body {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
-  padding: 0 2px;
+  font-size: 16px;
+  padding: 0 4px;
   line-height: 1;
   transition: color .15s;
   flex-shrink: 0;
 }
 .camera-item .cam-delete:hover { color: var(--red); }
-.camera-item.custom:hover .cam-delete { display: block; }
+.camera-item.custom .cam-delete { display: block; }
 /* When both edit and delete are visible, adjust spacing */
 .camera-item .cam-actions-cell {
   display: flex;
@@ -285,11 +297,6 @@ body {
 }
 
 /* ---- Camera Actions ---- */
-#panel-rtsp > .section-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
 .cam-actions { display: flex; gap: 4px; }
 .cam-action-btn {
   background: none;
@@ -297,7 +304,7 @@ body {
   border-radius: 4px;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 3px;
+  padding: 5px;
   display: flex;
   align-items: center;
   transition: all .15s;
@@ -306,20 +313,20 @@ body {
 
 /* ---- Camera Edit Button ---- */
 .camera-item .cam-edit {
-  display: none;
+  display: block;
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 13px;
-  padding: 0 2px;
+  font-size: 15px;
+  padding: 0 4px;
   line-height: 1;
   transition: color .15s;
   flex-shrink: 0;
+  opacity: 0.5;
 }
-.camera-item .cam-edit:hover { color: var(--accent-light); }
-.camera-item:hover .cam-edit { display: block; }
-.camera-item.custom:hover .cam-edit { display: block; }
+.camera-item .cam-edit:hover { color: var(--accent-light); opacity: 1; }
+.camera-item:hover .cam-edit { opacity: 1; }
 
 /* ---- Camera Modal ---- */
 .cam-modal {
@@ -479,6 +486,32 @@ body {
 }
 .btn-set-default:hover { color: var(--yellow); }
 .btn-set-default.saved { color: var(--green); }
+
+/* ---- Sidebar Camera Panel (bottom scrollable section) ---- */
+.sidebar-camera-panel {
+  flex: 1;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 2px solid var(--border-light);
+  min-height: 0;
+}
+.sidebar-camera-panel.active { display: flex; }
+
+.camera-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 10px;
+  flex-shrink: 0;
+}
+.camera-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--text-muted);
+}
 
 /* ---- Params ---- */
 .params-section { margin-top: auto; }
