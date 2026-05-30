@@ -1674,9 +1674,7 @@ async function testCameraConnectivity() {
   // Set all to "testing" state
   $$('.camera-item').forEach(el => {
     const dot = el.querySelector('.cam-status');
-    if (dot) {
-      dot.className = 'cam-status testing';
-    }
+    if (dot) dot.className = 'cam-status testing';
   });
 
   // Test each camera individually for immediate feedback
@@ -1688,12 +1686,9 @@ async function testCameraConnectivity() {
     try {
       const res = await fetch(`/api/cameras/${ip}/test`);
       const data = await res.json();
-      // Remove testing class and set result
-      dot.classList.remove('testing');
-      dot.classList.add(data.status || 'disconnected');
+      dot.className = 'cam-status ' + (data.status || 'disconnected');
     } catch (e) {
-      dot.classList.remove('testing');
-      dot.classList.add('disconnected');
+      dot.className = 'cam-status disconnected';
     }
   });
 
