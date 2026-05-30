@@ -11,6 +11,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -56,21 +57,37 @@ def _get_all_experiments(experiments_root: Path) -> list[dict]:
     return result
 
 
+def _get_font(size: int = 18) -> ImageFont.FreeTypeFont:
+    """Get a font that supports Chinese characters."""
+    font_paths = [
+        "C:/Windows/Fonts/msyh.ttc",       # 微软雅黑 Windows
+        "C:/Windows/Fonts/simhei.ttf",      # 黑体 Windows
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",  # Noto Linux
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",  # 文泉驿 Linux
+        "/System/Library/Fonts/PingFang.ttc",  # macOS
+    ]
+    for p in font_paths:
+        try:
+            return ImageFont.truetype(p, size)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default()
+
+
 def _draw_detections(image: np.ndarray, results, display_names: dict[str, str]) -> np.ndarray:
-    """Draw bounding boxes and labels on image."""
-    annotated = image.copy()
+    """Draw bounding boxes and labels on image using PIL (supports Chinese)."""
     if results is None or len(results) == 0:
-        return annotated
+        return image
     result = results[0]
     if result.boxes is None or len(result.boxes) == 0:
-        return annotated
+        return image
 
     boxes = result.boxes.xyxy.cpu().numpy()
     confs = result.boxes.conf.cpu().numpy()
     cls_ids = result.boxes.cls.cpu().numpy().astype(int)
     names = result.names if result.names else {}
 
-    # Color palette for different classes
     colors = [
         (56, 189, 248),   # blue
         (244, 114, 182),  # pink
@@ -78,6 +95,12 @@ def _draw_detections(image: np.ndarray, results, display_names: dict[str, str]) 
         (251, 191, 36),   # yellow
         (167, 139, 250),  # purple
     ]
+
+    # Convert cv2 image (BGR) to PIL image (RGB)
+    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
+    draw = ImageDraw.Draw(pil_img)
+    font = _get_font(18)
 
     for i in range(len(boxes)):
         cls_id = cls_ids[i]
@@ -89,14 +112,16 @@ def _draw_detections(image: np.ndarray, results, display_names: dict[str, str]) 
         label = f"{display} {conf:.2f}"
 
         # Draw box
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
 
         # Draw label background
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
-        cv2.rectangle(annotated, (x1, y1 - th - 8), (x1 + tw + 4, y1), color, -1)
-        cv2.putText(annotated, label, (x1 + 2, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.rectangle([x1, y1 - th - 8, x1 + tw + 8, y1], fill=color)
+        draw.text((x1 + 4, y1 - th - 4), label, fill=(0, 0, 0), font=font)
 
-    return annotated
+    # Convert back to cv2 (BGR)
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
 def create_app(experiments_root: Path, class_config: Path) -> FastAPI:
