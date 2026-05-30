@@ -67,6 +67,8 @@ class RtspStreamManager:
         self._lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
+        self._status: str = "idle"  # idle / connecting / streaming / error
+        self._error: str = ""
 
     def start(self, rtsp_url: str) -> bool:
         if self._running and self._url == rtsp_url:
@@ -74,6 +76,9 @@ class RtspStreamManager:
         self.stop()
         self._url = rtsp_url
         self._running = True
+        self._status = "connecting"
+        self._error = ""
+        self._frame = None
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
         return True
@@ -86,28 +91,44 @@ class RtspStreamManager:
         if self._thread:
             self._thread.join(timeout=2)
             self._thread = None
+        self._status = "idle"
+        self._error = ""
+        with self._lock:
+            self._frame = None
 
     def get_frame(self) -> bytes | None:
         with self._lock:
             return self._frame
 
+    def get_status(self) -> dict:
+        return {"status": self._status, "error": self._error}
+
     def _capture_loop(self):
         with _rtsp_lock:
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-        self._cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
-        if not self._cap.isOpened():
-            self._running = False
-            return
-        while self._running:
-            ret, frame = self._cap.read()
-            if not ret or frame is None:
-                time.sleep(0.1)
-                continue
-            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            with self._lock:
-                self._frame = buf.tobytes()
-        self._cap.release()
-        self._cap = None
+        try:
+            self._cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+            if not self._cap.isOpened():
+                self._status = "error"
+                self._error = "无法连接摄像头，请检查 IP 地址和网络"
+                self._running = False
+                return
+            self._status = "streaming"
+            while self._running:
+                ret, frame = self._cap.read()
+                if not ret or frame is None:
+                    time.sleep(0.1)
+                    continue
+                _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                with self._lock:
+                    self._frame = buf.tobytes()
+        except Exception as e:
+            self._status = "error"
+            self._error = str(e)
+        finally:
+            if self._cap:
+                self._cap.release()
+                self._cap = None
 
 
 _stream_manager = RtspStreamManager()
@@ -543,6 +564,11 @@ async def stream_rtsp(rtsp_url: str):
 async def stream_stop():
     _stream_manager.stop()
     return JSONResponse({"ok": True})
+
+
+@app.get("/api/stream/status")
+async def stream_status():
+    return JSONResponse(_stream_manager.get_status())
 
 
 @app.post("/api/detect/rtsp")

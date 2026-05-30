@@ -341,16 +341,49 @@ async function startRtspLoop() {
 
   const rtspUrl = state.selectedCamera.rtsp_url;
 
-  // Start MJPEG stream in the <img> element — browser handles decoding natively
+  // Show loading while connecting
+  els.loading.classList.remove('hidden');
+  els.loadingText.textContent = '正在连接摄像头...';
+
+  // Start MJPEG stream in the <img> element
   els.image.classList.remove('hidden');
   els.image.src = '/api/stream/rtsp?rtsp_url=' + encodeURIComponent(rtspUrl);
 
-  // Wait for the stream to start delivering frames
-  await new Promise((resolve) => {
-    els.image.onload = resolve;
-    els.image.onerror = resolve;
-    setTimeout(resolve, 2000);
-  });
+  // Poll stream status to detect connection errors
+  let connected = false;
+  for (let i = 0; i < 20; i++) {
+    if (!state.detecting) return;
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const st = await fetch('/api/stream/status').then(r => r.json());
+      if (st.status === 'streaming') {
+        connected = true;
+        break;
+      }
+      if (st.status === 'error') {
+        els.loading.classList.add('hidden');
+        els.image.classList.add('hidden');
+        showPlaceholder();
+        state.detecting = false;
+        els.btnStart.disabled = false;
+        els.btnStop.disabled = true;
+        alert('摄像头连接失败: ' + (st.error || '未知错误'));
+        return;
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  els.loading.classList.add('hidden');
+
+  if (!connected) {
+    els.image.classList.add('hidden');
+    showPlaceholder();
+    state.detecting = false;
+    els.btnStart.disabled = false;
+    els.btnStop.disabled = true;
+    alert('摄像头连接超时，请检查网络和 IP 地址');
+    return;
+  }
 
   // Set canvas to match rendered size
   const wrap = els.canvas.parentElement;
@@ -375,7 +408,6 @@ async function startRtspLoop() {
       els.ctx.clearRect(0, 0, cvsW, cvsH);
 
       if (data.frame_width > 0 && data.frame_height > 0 && state.lastResults.length > 0) {
-        // Match the img's object-fit: contain scaling
         const imgAspect = data.frame_width / data.frame_height;
         const wrapAspect = cvsW / cvsH;
         let drawW, drawH, drawX, drawY;
