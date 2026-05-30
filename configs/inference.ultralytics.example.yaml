@@ -12,4 +12,5 @@ class_names:
   - phone_use
   - talking
   - sleeping
+  - standing
 extra_args: {}

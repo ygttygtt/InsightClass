@@ -71,7 +71,7 @@
     <div class="stat-cards" id="stat-cards">
       {% for name, display in display_names.items() %}
       <div class="stat-card" data-class="{{ name }}">
-        <div class="stat-color" style="background: {{ {'phone_use': '#ef4444', 'talking': '#3b82f6', 'sleeping': '#eab308'}.get(name, '#888') }}"></div>
+        <div class="stat-color" style="background: {{ {'phone_use': '#ef4444', 'talking': '#3b82f6', 'sleeping': '#eab308', 'standing': '#22c55e'}.get(name, '#888') }}"></div>
         <div class="stat-info">
           <span class="stat-label">{{ display }}</span>
           <span class="stat-count" id="count-{{ name }}">0</span>

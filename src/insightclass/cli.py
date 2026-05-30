@@ -69,6 +69,15 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--experiments-root", required=True)
     compare_parser.add_argument("--output", required=True)
 
+    view_parser = subparsers.add_parser("view-experiments", help="View training experiment results")
+    view_parser.add_argument("--experiments-root", default="experiments", help="Experiments directory")
+    view_parser.add_argument("--port", type=int, default=8001, help="Server port (default: 8001)")
+
+    demo_parser = subparsers.add_parser("demo", help="Launch interactive demo (inference + training results)")
+    demo_parser.add_argument("--experiments-root", default="experiments", help="Experiments directory (default: experiments)")
+    demo_parser.add_argument("--class-config", default="configs/classes.yaml", help="Class config path (default: configs/classes.yaml)")
+    demo_parser.add_argument("--port", type=int, default=8000, help="Server port (default: 8000)")
+
     return parser
 
 
@@ -181,6 +190,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compare-experiments":
         csv_path = export_experiment_summary(args.experiments_root, args.output)
         print(f"Saved summary to {csv_path.resolve()}")
+        return 0
+
+    if args.command == "view-experiments":
+        from insightclass.web.experiment_viewer import create_app
+        import uvicorn
+        app = create_app(Path(args.experiments_root))
+        print(f"Starting experiment viewer on http://127.0.0.1:{args.port}")
+        print(f"Experiments root: {Path(args.experiments_root).resolve()}")
+        uvicorn.run(app, host="127.0.0.1", port=args.port)
+        return 0
+
+    if args.command == "demo":
+        from insightclass.web.demo import create_app
+        import uvicorn
+        app = create_app(Path(args.experiments_root), Path(args.class_config))
+        print(f"Starting InsightClass Demo on http://127.0.0.1:{args.port}")
+        print(f"Experiments root: {Path(args.experiments_root).resolve()}")
+        uvicorn.run(app, host="127.0.0.1", port=args.port)
         return 0
 
     if args.command == "serve":

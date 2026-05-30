@@ -2,6 +2,7 @@ const COLORS = {
   phone_use: '#ef4444',
   talking: '#3b82f6',
   sleeping: '#eab308',
+  standing: '#22c55e',
 };
 
 const DISPLAY_NAMES = window.DISPLAY_NAMES || {};

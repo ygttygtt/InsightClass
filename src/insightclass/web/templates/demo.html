@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InsightClass Demo</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;display:flex;flex-direction:column}
+
+/* ---- header ---- */
+.header{display:flex;align-items:center;gap:16px;padding:14px 24px;background:#1e293b;border-bottom:1px solid #334155}
+.header h1{font-size:20px;white-space:nowrap}
+.header .subtitle{font-weight:400;color:#94a3b8;font-size:14px;margin-left:4px}
+
+/* ---- tabs ---- */
+.tabs{display:flex;gap:0;background:#1e293b;border-bottom:1px solid #334155;padding:0 24px}
+.tab-btn{padding:10px 20px;font-size:14px;color:#94a3b8;cursor:pointer;border:none;background:transparent;border-bottom:2px solid transparent;transition:all .15s}
+.tab-btn:hover{color:#e2e8f0}
+.tab-btn.active{color:#38bdf8;border-bottom-color:#38bdf8}
+
+/* ---- layout ---- */
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:300px;min-width:300px;background:#1e293b;border-right:1px solid #334155;display:flex;flex-direction:column;overflow-y:auto}
+.main{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:20px}
+
+/* ---- sidebar sections ---- */
+.sidebar-section{padding:16px;border-bottom:1px solid #334155}
+.sidebar-label{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+.model-select{width:100%;padding:8px 12px;background:#0f172a;border:1px solid #475569;border-radius:6px;color:#e2e8f0;font-size:13px;cursor:pointer}
+.model-select:focus{outline:none;border-color:#38bdf8}
+.slider-group{margin-top:12px}
+.slider-label{display:flex;justify-content:space-between;font-size:12px;color:#94a3b8;margin-bottom:4px}
+.slider-label span{color:#38bdf8;font-weight:600}
+input[type=range]{width:100%;accent-color:#38bdf8}
+
+/* ---- experiment cards in sidebar ---- */
+.exp-list{flex:1;overflow-y:auto;padding:8px}
+.exp-card{padding:10px 12px;border-radius:6px;cursor:pointer;margin-bottom:4px;border:1px solid transparent;transition:all .15s}
+.exp-card:hover{background:#334155}
+.exp-card.selected{background:#1e3a5f;border-color:#2563eb}
+.exp-card .exp-name{font-size:13px;font-weight:500}
+.exp-card .exp-meta{font-size:11px;color:#64748b;margin-top:2px}
+
+/* ---- upload area ---- */
+.upload-zone{border:2px dashed #475569;border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+.upload-zone:hover,.upload-zone.dragover{border-color:#38bdf8;background:rgba(56,189,248,.05)}
+.upload-zone .icon{font-size:48px;margin-bottom:12px}
+.upload-zone .text{font-size:15px;color:#94a3b8}
+.upload-zone .hint{font-size:12px;color:#64748b;margin-top:8px}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+
+/* ---- result display ---- */
+.result-container{display:flex;gap:20px;flex-wrap:wrap}
+.result-image{flex:1;min-width:300px}
+.result-image img{max-width:100%;border-radius:8px;border:1px solid #334155}
+.result-info{width:320px;min-width:280px}
+.result-stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.stat-card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px 16px;flex:1;min-width:100px}
+.stat-card .stat-label{font-size:11px;color:#64748b;text-transform:uppercase}
+.stat-card .stat-value{font-size:20px;font-weight:700;color:#38bdf8;margin-top:4px}
+
+/* ---- detection list ---- */
+.det-list{max-height:400px;overflow-y:auto}
+.det-item{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0f172a;border-radius:6px;margin-bottom:4px}
+.det-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.det-info{flex:1}
+.det-name{font-size:13px;font-weight:500}
+.det-conf{font-size:11px;color:#64748b}
+
+/* ---- section ---- */
+.section{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:18px}
+.section-title{font-size:14px;font-weight:600;margin-bottom:14px;color:#cbd5e1}
+
+/* ---- cards ---- */
+.cards-row{display:flex;gap:12px;flex-wrap:wrap}
+.info-card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:14px 18px;min-width:180px;flex:1}
+.info-card .card-label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.info-card .card-value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.info-card .card-detail{font-size:12px;color:#94a3b8;margin-top:4px}
+
+/* ---- chart ---- */
+.chart-container{position:height:280px;position:relative}
+.chart-container canvas{width:100%!important}
+
+/* ---- confusion matrix ---- */
+.cm-grid{display:flex;gap:16px;flex-wrap:wrap}
+.cm-card{text-align:center}
+.cm-card .cm-label{font-size:12px;color:#94a3b8;margin-bottom:8px}
+.cm-card img{max-width:400px;width:100%;border-radius:6px;border:1px solid #334155}
+
+/* ---- params ---- */
+.params-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.param-item{display:flex;justify-content:space-between;gap:8px;padding:6px 10px;background:#0f172a;border-radius:4px;font-size:13px}
+.param-key{color:#94a3b8}
+.param-val{color:#e2e8f0;font-weight:500;text-align:right}
+
+/* ---- empty ---- */
+.empty-state{display:flex;align-items:center;justify-content:center;flex:1;color:#64748b;font-size:15px;text-align:center;padding:60px}
+
+/* ---- loading ---- */
+.loading{display:inline-block;width:20px;height:20px;border:2px solid #475569;border-top-color:#38bdf8;border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---- scrollbar ---- */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#475569;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#64748b}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>InsightClass <span class="subtitle">Demo</span></h1>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('inference')">推理测试</button>
+  <button class="tab-btn" onclick="switchTab('results')">训练结果</button>
+</div>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">选择模型</div>
+      <select class="model-select" id="model-select" onchange="onModelChange()">
+        <option value="">加载中...</option>
+      </select>
+    </div>
+    <div class="sidebar-section" id="settings-section">
+      <div class="sidebar-label">推理参数</div>
+      <div class="slider-group">
+        <div class="slider-label">置信度 <span id="conf-val">0.25</span></div>
+        <input type="range" id="confidence" min="0.05" max="0.95" step="0.05" value="0.25" oninput="document.getElementById('conf-val').textContent=this.value">
+      </div>
+      <div class="slider-group">
+        <div class="slider-label">IoU <span id="iou-val">0.45</span></div>
+        <input type="range" id="iou" min="0.1" max="0.9" step="0.05" value="0.45" oninput="document.getElementById('iou-val').textContent=this.value">
+      </div>
+    </div>
+    <div class="sidebar-section" id="exp-list-section" style="display:none">
+      <div class="sidebar-label">实验对比（可多选）</div>
+    </div>
+    <div class="exp-list" id="exp-list" style="display:none"></div>
+  </div>
+
+  <!-- Main -->
+  <div class="main" id="main-content">
+    <!-- Inference Tab -->
+    <div id="tab-inference">
+      <div class="upload-zone" id="upload-zone">
+        <div class="icon">📷</div>
+        <div class="text">点击或拖拽上传图片</div>
+        <div class="hint">支持 JPG / PNG</div>
+        <input type="file" id="file-input" accept="image/*" onchange="handleUpload(this.files[0])">
+      </div>
+      <div id="result-area" style="display:none">
+        <div class="result-container">
+          <div class="result-image">
+            <img id="result-img" src="" alt="result">
+          </div>
+          <div class="result-info">
+            <div class="result-stats">
+              <div class="stat-card">
+                <div class="stat-label">检测数量</div>
+                <div class="stat-value" id="det-count">0</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">推理耗时</div>
+                <div class="stat-value" id="det-latency">0ms</div>
+              </div>
+            </div>
+            <div class="section">
+              <div class="section-title">检测结果</div>
+              <div class="det-list" id="det-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results Tab -->
+    <div id="tab-results" style="display:none">
+      <div class="empty-state" id="results-empty">请从左侧选择实验</div>
+      <div id="results-content" style="display:none">
+        <div class="cards-row" id="cards-row"></div>
+        <div class="section" id="params-section" style="display:none">
+          <div class="section-title">超参数</div>
+          <div class="params-grid" id="params-grid"></div>
+        </div>
+        <div class="section">
+          <div class="section-title">训练曲线</div>
+          <div style="position:relative;height:280px"><canvas id="loss-chart"></canvas></div>
+          <div style="position:relative;height:280px;margin-top:16px"><canvas id="map-chart"></canvas></div>
+        </div>
+        <div class="section" id="cm-section" style="display:none">
+          <div class="section-title">混淆矩阵</div>
+          <div class="cm-grid" id="cm-grid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLORS=['#38bdf8','#f472b6','#34d399','#fbbf24','#a78bfa','#fb923c','#22d3ee','#e879f9','#4ade80','#f87171'];
+let allExperiments=[];
+let selectedExpIds=new Set();
+let lossChart=null,mapChart=null;
+let currentTab='inference';
+
+// ---- Tab switching ----
+function switchTab(tab){
+  currentTab=tab;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.tab-btn:${tab==='inference'?'first-child':'last-child'}`).classList.add('active');
+  document.getElementById('tab-inference').style.display=tab==='inference'?'':'none';
+  document.getElementById('tab-results').style.display=tab==='results'?'':'none';
+  document.getElementById('settings-section').style.display=tab==='inference'?'':'none';
+  document.getElementById('exp-list-section').style.display=tab==='results'?'':'none';
+  document.getElementById('exp-list').style.display=tab==='results'?'':'none';
+  if(tab==='results') renderResults();
+}
+
+// ---- Load experiments ----
+async function loadExperiments(){
+  const resp=await fetch('/api/experiments');
+  allExperiments=await resp.json();
+  renderModelSelect();
+  renderExpList();
+}
+
+function renderModelSelect(){
+  const sel=document.getElementById('model-select');
+  const available=allExperiments.filter(e=>e.weights_path);
+  if(!available.length){
+    sel.innerHTML='<option value="">无可用模型</option>';
+    return;
+  }
+  sel.innerHTML=available.map(e=>
+    `<option value="${e.weights_path}">${e.experiment_id} (${e.model_weights})</option>`
+  ).join('');
+}
+
+function renderExpList(){
+  const el=document.getElementById('exp-list');
+  el.innerHTML=allExperiments.map(exp=>{
+    const checked=selectedExpIds.has(exp.experiment_id)?'selected':'';
+    const mAP=exp.metrics?.['metrics/mAP50(B)'];
+    return`<div class="exp-card ${checked}" data-id="${exp.experiment_id}" onclick="toggleExp('${exp.experiment_id}')">
+      <div class="exp-name">${exp.experiment_id}</div>
+      <div class="exp-meta">${exp.model_weights} | mAP50: ${mAP!=null?Number(mAP).toFixed(3):'-'}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleExp(id){
+  if(selectedExpIds.has(id))selectedExpIds.delete(id);
+  else selectedExpIds.add(id);
+  renderExpList();
+  renderResults();
+}
+
+function onModelChange(){}
+
+// ---- Image upload ----
+const uploadZone=document.getElementById('upload-zone');
+const fileInput=document.getElementById('file-input');
+
+uploadZone.addEventListener('dragover',e=>{e.preventDefault();uploadZone.classList.add('dragover')});
+uploadZone.addEventListener('dragleave',()=>uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop',e=>{
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  if(e.dataTransfer.files.length) handleUpload(e.dataTransfer.files[0]);
+});
+
+async function handleUpload(file){
+  if(!file) return;
+  const model=document.getElementById('model-select').value;
+  if(!model){alert('请先选择一个模型');return;}
+
+  const conf=document.getElementById('confidence').value;
+  const iou=document.getElementById('iou').value;
+
+  // Show loading
+  uploadZone.innerHTML='<div class="loading"></div><div class="text" style="margin-top:12px">推理中...</div>';
+
+  const form=new FormData();
+  form.append('image',file);
+  form.append('model',model);
+  form.append('confidence',conf);
+  form.append('iou',iou);
+
+  try{
+    const resp=await fetch('/api/detect/image',{method:'POST',body:form});
+    const data=await resp.json();
+    if(!resp.ok){alert(data.detail||'推理失败');return;}
+    showResult(data);
+  }catch(err){
+    alert('请求失败: '+err.message);
+  }finally{
+    uploadZone.innerHTML=`<div class="icon">📷</div><div class="text">点击或拖拽上传图片</div><div class="hint">支持 JPG / PNG</div><input type="file" id="file-input" accept="image/*" onchange="handleUpload(this.files[0])">`;
+  }
+}
+
+function showResult(data){
+  document.getElementById('result-area').style.display='';
+  document.getElementById('result-img').src=data.image;
+  document.getElementById('det-count').textContent=data.detections.length;
+  document.getElementById('det-latency').textContent=data.latency_ms+'ms';
+
+  const detColors=['#38bdf8','#f472b6','#34d399','#fbbf24','#a78bfa','#fb923c'];
+  const classColorMap={};
+  let colorIdx=0;
+
+  const listEl=document.getElementById('det-list');
+  if(!data.detections.length){
+    listEl.innerHTML='<div style="color:#64748b;font-size:13px;padding:8px">未检测到目标</div>';
+    return;
+  }
+  listEl.innerHTML=data.detections.map(d=>{
+    if(!(d.class_name in classColorMap)) classColorMap[d.class_name]=detColors[colorIdx++%detColors.length];
+    const c=classColorMap[d.class_name];
+    return`<div class="det-item"><div class="det-dot" style="background:${c}"></div><div class="det-info"><div class="det-name">${d.display_name}</div><div class="det-conf">置信度: ${(d.confidence*100).toFixed(1)}%</div></div></div>`;
+  }).join('');
+}
+
+// ---- Results tab ----
+async function renderResults(){
+  const selected=allExperiments.filter(e=>selectedExpIds.has(e.experiment_id));
+  if(!selected.length){
+    document.getElementById('results-empty').style.display='';
+    document.getElementById('results-content').style.display='none';
+    return;
+  }
+  document.getElementById('results-empty').style.display='none';
+  document.getElementById('results-content').style.display='';
+
+  renderInfoCards(selected);
+  if(selected.length===1) renderParams(selected[0]);
+  else document.getElementById('params-section').style.display='none';
+  await renderCharts(selected);
+  renderConfusionMatrices(selected);
+}
+
+function renderInfoCards(exps){
+  document.getElementById('cards-row').innerHTML=exps.map((exp,i)=>{
+    const c=COLORS[i%COLORS.length];
+    const mAP50=exp.metrics?.['metrics/mAP50(B)'];
+    const mAP95=exp.metrics?.['metrics/mAP50-95(B)'];
+    const p=exp.metrics?.['metrics/precision(B)'];
+    const r=exp.metrics?.['metrics/recall(B)'];
+    return`<div class="info-card" style="border-top:3px solid ${c}">
+      <div class="card-label">${exp.experiment_id}</div>
+      <div class="card-value" style="color:${c}">${mAP95!=null?Number(mAP95).toFixed(3):'-'}</div>
+      <div class="card-detail">mAP50-95</div>
+      <div class="card-detail" style="margin-top:6px">mAP50: ${mAP50!=null?Number(mAP50).toFixed(3):'-'} | P: ${p!=null?Number(p).toFixed(3):'-'} | R: ${r!=null?Number(r).toFixed(3):'-'}</div>
+      <div class="card-detail">${exp.model_weights} | ${exp.hyperparameters?.epochs||'-'}ep</div>
+    </div>`;
+  }).join('');
+}
+
+function renderParams(exp){
+  const sec=document.getElementById('params-section');
+  sec.style.display='';
+  const hp=exp.hyperparameters||{};
+  const entries=Object.entries(hp).filter(([k])=>k!=='extra_args');
+  if(hp.extra_args) Object.entries(hp.extra_args).forEach(([k,v])=>entries.push([k,v]));
+  document.getElementById('params-grid').innerHTML=entries.map(([k,v])=>
+    `<div class="param-item"><span class="param-key">${k}</span><span class="param-val">${typeof v==='object'?JSON.stringify(v):v}</span></div>`
+  ).join('');
+}
+
+async function renderCharts(exps){
+  const allCSV=await Promise.all(exps.map(async exp=>{
+    if(!exp.has_results_csv) return null;
+    const r=await fetch(`/api/experiments/${exp.experiment_id}/results.csv`);
+    return r.ok?r.json():null;
+  }));
+  const lossCols=['train/box_loss','train/cls_loss','train/dfl_loss'];
+  const mapCols=['metrics/mAP50(B)','metrics/mAP50-95(B)'];
+  const lossDS=[],mapDS=[];
+  let labels=[];
+  exps.forEach((exp,i)=>{
+    const csv=allCSV[i];if(!csv)return;
+    if(!labels.length) labels=csv.rows.map(r=>r.epoch);
+    const c=COLORS[i%COLORS.length];
+    lossCols.forEach((col,ci)=>{
+      if(!csv.columns.includes(col))return;
+      const shades=[c,c+'aa',c+'66'];
+      lossDS.push({label:`${exp.experiment_id} - ${col.split('/')[1]}`,data:csv.rows.map(r=>parseFloat(r[col])||null),borderColor:shades[ci],backgroundColor:shades[ci]+'22',borderWidth:1.5,pointRadius:0,tension:.3});
+    });
+    mapCols.forEach((col,ci)=>{
+      if(!csv.columns.includes(col))return;
+      const shades=[c,c+'bb'];
+      mapDS.push({label:`${exp.experiment_id} - ${col.includes('95')?'mAP50-95':'mAP50'}`,data:csv.rows.map(r=>parseFloat(r[col])||null),borderColor:shades[ci],backgroundColor:shades[ci]+'22',borderWidth:1.5,pointRadius:0,tension:.3});
+    });
+  });
+  if(lossChart){lossChart.destroy();lossChart=null;}
+  if(mapChart){mapChart.destroy();mapChart=null;}
+  const grid='#334155',tick='#64748b';
+  const scales={x:{ticks:{color:tick},grid:{color:grid}},y:{ticks:{color:tick},grid:{color:grid}}};
+  if(lossDS.length){
+    lossChart=new Chart(document.getElementById('loss-chart'),{type:'line',data:{labels,datasets:lossDS},options:{responsive:true,maintainAspectRatio:false,plugins:{title:{display:true,text:'Loss',color:'#e2e8f0'},legend:{labels:{color:'#94a3b8',boxWidth:12,font:{size:11}}}},scales,interaction:{mode:'index',intersect:false}}});
+  }
+  if(mapDS.length){
+    mapChart=new Chart(document.getElementById('map-chart'),{type:'line',data:{labels,datasets:mapDS},options:{responsive:true,maintainAspectRatio:false,plugins:{title:{display:true,text:'mAP',color:'#e2e8f0'},legend:{labels:{color:'#94a3b8',boxWidth:12,font:{size:11}}}},scales,interaction:{mode:'index',intersect:false}}});
+  }
+}
+
+function renderConfusionMatrices(exps){
+  const filtered=exps.filter(e=>e.has_confusion_matrix);
+  const sec=document.getElementById('cm-section');
+  if(!filtered.length){sec.style.display='none';return;}
+  sec.style.display='';
+  document.getElementById('cm-grid').innerHTML=filtered.map(e=>
+    `<div class="cm-card"><div class="cm-label">${e.experiment_id}</div><img src="/api/experiments/${e.experiment_id}/confusion_matrix" alt="cm"></div>`
+  ).join('');
+}
+
+loadExperiments();
+</script>
+</body>
+</html>
