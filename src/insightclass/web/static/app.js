@@ -230,8 +230,8 @@ async function loadCameras() {
       return;
     }
 
-    // First visit: run connectivity test and auto-connect to first online camera
-    if (state.source === 'rtsp' && !state.selectedCamera) {
+    // Always run connectivity test on load, then auto-connect to first online camera
+    if (state.source === 'rtsp') {
       testCameraConnectivity().then(() => {
         // Find first connected camera and click it
         const items = $$('.camera-item');
@@ -1676,24 +1676,22 @@ async function testCameraConnectivity() {
     dot.className = 'cam-status testing';
   });
 
-  try {
-    const res = await fetch('/api/cameras/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    const results = await res.json();
-    // Update each camera immediately as results come in
-    $$('.camera-item').forEach(el => {
-      const ip = el.dataset.ip;
-      const dot = el.querySelector('.cam-status');
-      if (dot && results[ip]) {
-        dot.className = 'cam-status ' + results[ip];
-      }
-    });
-  } catch (e) {
-    console.error('Connectivity test failed:', e);
-  }
+  // Test each camera individually for immediate feedback
+  const items = $$('.camera-item');
+  const promises = items.map(async (el) => {
+    const ip = el.dataset.ip;
+    const dot = el.querySelector('.cam-status');
+    if (!dot) return;
+    try {
+      const res = await fetch(`/api/cameras/${ip}/test`);
+      const data = await res.json();
+      dot.className = 'cam-status ' + (data.status || 'disconnected');
+    } catch (e) {
+      dot.className = 'cam-status disconnected';
+    }
+  });
+
+  await Promise.all(promises);
   btn.disabled = false;
   btn.style.opacity = '';
 }

@@ -852,6 +852,18 @@ async def delete_camera(ip: str):
     return JSONResponse({"ok": True}, media_type="application/json; charset=utf-8")
 
 
+@app.get("/api/cameras/{ip}/test")
+async def test_single_camera(ip: str):
+    """Test connectivity for a single camera, return result immediately."""
+    cameras = _build_camera_list(include_credentials=True)
+    cam = next((c for c in cameras if c["ip"] == ip), None)
+    if not cam:
+        return JSONResponse({"error": "Camera not found"}, status_code=404)
+    rtsp_url = cam.get("rtsp_url", "")
+    ok = await asyncio.to_thread(_test_camera_connection, rtsp_url)
+    return JSONResponse({"ip": ip, "status": "connected" if ok else "disconnected"})
+
+
 @app.post("/api/cameras/test")
 async def test_cameras(request: Request):
     body = await request.json()

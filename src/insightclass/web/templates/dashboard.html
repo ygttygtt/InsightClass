@@ -253,6 +253,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
     <div class="dash-clock" id="clock">--:--:--</div>
     <div class="dash-actions">
+      <button class="dash-btn" id="btn-test-all" title="测试所有摄像头连通性">连通测试</button>
       <button class="dash-btn" id="btn-reset-layout" title="重置图表布局">重置布局</button>
       <button class="dash-btn active" id="btn-auto-refresh" title="自动刷新">自动刷新</button>
       <button class="dash-btn primary" id="btn-report" title="生成今日报告">生成今日报告</button>
@@ -965,6 +966,57 @@ document.getElementById('btn-back').addEventListener('click', () => { window.loc
 
 // ── Reset Layout ──
 document.getElementById('btn-reset-layout').addEventListener('click', () => { resetLayout(); });
+
+// ── Connectivity Test ──
+document.getElementById('btn-test-all').addEventListener('click', async function() {
+  const btn = this;
+  btn.disabled = true;
+  btn.textContent = '测试中...';
+  btn.style.opacity = '0.5';
+
+  try {
+    // Get all camera IPs from the current cards
+    const cards = document.querySelectorAll('.cam-card');
+    const promises = Array.from(cards).map(async (card) => {
+      const ip = card.dataset.ip;
+      const dot = card.querySelector('.cam-status-dot');
+      if (dot) {
+        dot.className = 'cam-status-dot'; // Reset to neutral
+        dot.style.background = 'var(--yellow)';
+        dot.style.boxShadow = '0 0 8px var(--yellow)';
+      }
+      try {
+        const res = await fetch('/api/cameras/' + ip + '/test');
+        const data = await res.json();
+        if (dot) {
+          if (data.status === 'connected') {
+            dot.className = 'cam-status-dot online';
+            dot.style.background = '';
+            dot.style.boxShadow = '';
+          } else {
+            dot.className = 'cam-status-dot offline';
+            dot.style.background = '';
+            dot.style.boxShadow = '';
+          }
+        }
+      } catch (e) {
+        if (dot) {
+          dot.className = 'cam-status-dot offline';
+          dot.style.background = '';
+          dot.style.boxShadow = '';
+        }
+      }
+    });
+
+    await Promise.all(promises);
+  } catch (e) {
+    console.error('Connectivity test failed:', e);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '连通测试';
+  btn.style.opacity = '';
+});
 
 // ── Init ──
 initDraggable();
