@@ -2,6 +2,23 @@ const COLORS = { phone_use: '#ef4444', talking: '#3b82f6', sleeping: '#eab308' }
 const DISPLAY_NAMES = window.DISPLAY_NAMES || {};
 const DEFAULT_MODEL = window.DEFAULT_MODEL || '';
 
+// ---- State Persistence (localStorage) ----
+const STORAGE_KEY = 'insightclass_state';
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      lastCameraIp: state.selectedCamera ? state.selectedCamera.ip : null,
+      wasDetecting: state.detecting,
+      model: getModelPath(),
+    }));
+  } catch (e) { /* ignore */ }
+}
+function loadSavedState() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+  } catch (e) { return {}; }
+}
+
 const state = {
   source: 'rtsp',
   selectedCamera: null,
@@ -34,11 +51,21 @@ const state = {
 };
 
 let _fileIdCounter = 0;
+let _lastRtspCameraIp = '10.8.14.34';  // Default camera, overridden by localStorage if saved
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 const esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
 const escAttr = (s) => esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+function _showToast(msg, duration = 4000) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, duration);
+}
 
 // ---- Elements ----
 const els = {
@@ -197,22 +224,59 @@ function switchSource(source) {
   const rightSidebar = $('#right-sidebar');
   if (rightSidebar) rightSidebar.style.display = source === 'rtsp' ? '' : 'none';
 
-  showPlaceholder();
+  showPlaceholder(source);
   resetStats();
   updateExportButton();
   updateFileCountBadge();
+
+  // Restore RTSP camera when switching back
+  if (source === 'rtsp') {
+    _restoreRtspCamera();
+  }
+
+  // Auto-start webcam when switching to webcam source
+  if (source === 'webcam') {
+    startWebcam();
+  }
 }
 
-function showPlaceholder() {
+function showPlaceholder(source) {
   els.video.classList.add('hidden');
   els.image.classList.add('hidden');
   els.canvas.classList.add('hidden');
   els.placeholder.classList.remove('hidden');
   els.ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
+  const texts = {
+    rtsp: '选择右侧摄像头，点击「开始检测」启动实时监控',
+    webcam: '点击「开始检测」打开电脑摄像头',
+    image: '在左侧拖拽或点击上传图片，自动开始检测',
+    video: '在左侧拖拽或点击上传视频，自动开始检测',
+  };
+  els.placeholder.querySelector('p').textContent = texts[source] || texts.rtsp;
 }
 
 function hidePlaceholder() {
   els.placeholder.classList.add('hidden');
+}
+
+function _restoreRtspCamera() {
+  if (!state.cameras || state.cameras.length === 0) {
+    loadCameras().then(() => _clickLastCamera());
+    return;
+  }
+  _clickLastCamera();
+}
+
+function _clickLastCamera() {
+  const items = $$('.camera-item');
+  if (items.length === 0) return;
+  let clicked = false;
+  if (_lastRtspCameraIp) {
+    items.forEach(el => {
+      if (el.dataset.ip === _lastRtspCameraIp) { el.click(); clicked = true; }
+    });
+  }
+  if (!clicked) items[0].click();
 }
 
 // ---- Camera List ----
@@ -224,21 +288,36 @@ async function loadCameras() {
     state.cameras = cameras;
     renderCameraList(cameras);
 
-    // Auto-select camera from query param (e.g. /?camera=10.8.14.36)
+    // Priority: query param > saved state > first camera
     const params = new URLSearchParams(window.location.search);
-    const targetIp = params.get('camera');
+    const queryIp = params.get('camera');
+    const saved = loadSavedState();
+    if (saved.lastCameraIp) _lastRtspCameraIp = saved.lastCameraIp;
+    const targetIp = queryIp || _lastRtspCameraIp;
+
     if (targetIp) {
       const items = $$('.camera-item');
       items.forEach(el => {
         if (el.dataset.ip === targetIp) el.click();
       });
+      // Restore detection state
+      if (saved.wasDetecting && state.selectedCamera && state.streaming) {
+        startDetection();
+      }
       return;
     }
 
-    // Auto-select first camera on load (no auto connectivity test)
+    // Fallback: auto-select first camera
     if (state.source === 'rtsp') {
       const items = $$('.camera-item');
       if (items.length > 0) items[0].click();
+    }
+
+    // Guide pulse on test button
+    const testBtn = $('#btn-test-cameras');
+    if (testBtn) {
+      testBtn.classList.add('guide-pulse');
+      setTimeout(() => testBtn.classList.remove('guide-pulse'), 5000);
     }
   } catch (e) {
     console.error('Camera list error:', e);
@@ -340,9 +419,7 @@ function renderCameraList(cameras) {
     list.appendChild(itemsDiv);
   });
 
-  if (cameras.length > 0 && !state.selectedCamera) {
-    state.selectedCamera = cameras[0];
-  }
+  // Don't pre-set selectedCamera here — let the click below trigger the actual connection
 }
 
 // ---- Camera Selection → Immediate Monitor ----
@@ -354,6 +431,8 @@ function selectCamera(el, cam) {
   const changed = !state.selectedCamera || state.selectedCamera.ip !== cam.ip;
   const wasDetecting = state.detecting;
   state.selectedCamera = cam;
+  _lastRtspCameraIp = cam.ip;
+  saveState();
 
   if (state.source === 'rtsp' && changed) {
     stopDetection();
@@ -395,7 +474,7 @@ async function startMonitor() {
       if (st.status === 'error') {
         els.loading.classList.add('hidden');
         els.image.classList.add('hidden');
-        showPlaceholder();
+        showPlaceholder(state.source);
         alert('摄像头连接失败: ' + (st.error || '未知错误'));
         return;
       }
@@ -405,12 +484,13 @@ async function startMonitor() {
   els.loading.classList.add('hidden');
   if (!connected) {
     els.image.classList.add('hidden');
-    showPlaceholder();
+    showPlaceholder(state.source);
     alert('摄像头连接超时，请检查网络和 IP 地址');
     return;
   }
 
   state.streaming = true;
+  _showToast('摄像头已连接，点击「开始检测」启动 AI 识别');
 }
 
 // ---- RTSP Detection (overlay on existing stream) ----
@@ -422,6 +502,7 @@ function startDetection() {
   els.btnStart.disabled = true;
   els.btnStop.disabled = false;
   resetStats();
+  saveState();
 
   const cvsW = els.canvas.width, cvsH = els.canvas.height;
   const rtspUrl = state.selectedCamera.rtsp_url;
@@ -470,11 +551,24 @@ function stopDetection() {
   els.ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
   els.btnStart.disabled = false;
   els.btnStop.disabled = true;
+  saveState();
 }
 
 // ---- Webcam ----
 async function startWebcam() {
   try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      // Try redirecting to HTTPS version of the same URL
+      const httpsUrl = window.location.href.replace(/^http:/, 'https:');
+      if (httpsUrl !== window.location.href) {
+        if (confirm('摄像头需要 HTTPS 才能在局域网中使用。\n\n是否跳转到 HTTPS 访问？\n（浏览器会提示证书不安全，点击"继续访问"即可）')) {
+          window.location.href = httpsUrl;
+        }
+      } else {
+        alert('摄像头 API 不可用，请使用 HTTPS 访问。');
+      }
+      return;
+    }
     state.stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 960 }, height: { ideal: 540 } } });
     els.video.srcObject = state.stream;
     els.video.classList.remove('hidden');
@@ -653,6 +747,7 @@ async function detectImage() {
 function stopAll() {
   stopDetection();
   state.streaming = false;
+  state.selectedCamera = null;
   if (state.animId) { cancelAnimationFrame(state.animId); state.animId = null; }
   if (state.stream) {
     state.stream.getTracks().forEach(t => t.stop());
@@ -1292,7 +1387,7 @@ function clearAllFiles() {
   state.batchItems = [];
   updateFileCountBadge();
   renderFilePanel();
-  showPlaceholder();
+  showPlaceholder(state.source);
 }
 
 function removeFile(id) {
@@ -1307,7 +1402,7 @@ function removeFile(id) {
   if (state.activeFileId === id) state.activeFileId = null;
   updateFileCountBadge();
   renderFilePanel();
-  if (state.fileList.length === 0) showPlaceholder();
+  if (state.fileList.length === 0) showPlaceholder(state.source);
 }
 
 async function exportSelected() {
@@ -1404,7 +1499,7 @@ els.btnStop.addEventListener('click', () => {
     resetStats();
   } else {
     stopAll();
-    showPlaceholder();
+    showPlaceholder(state.source);
     resetStats();
   }
 });
@@ -1437,6 +1532,7 @@ els.confidence.addEventListener('input', () => {
 els.iou.addEventListener('input', () => {
   els.iouVal.textContent = els.iou.value;
 });
+els.modelSelect.addEventListener('change', saveState);
 
 window.addEventListener('resize', resizeCanvas);
 
@@ -1704,5 +1800,11 @@ els.btnSelectMode.addEventListener('click', toggleSelectionMode);
 els.btnClearFiles.addEventListener('click', clearAllFiles);
 
 // ---- Init ----
+// Restore saved model selection
+const _saved = loadSavedState();
+if (_saved.model) {
+  const opt = [...els.modelSelect.options].find(o => o.value === _saved.model);
+  if (opt) els.modelSelect.value = _saved.model;
+}
 loadCameras();
 if (!DEFAULT_MODEL) console.warn('No trained models found in experiments/');

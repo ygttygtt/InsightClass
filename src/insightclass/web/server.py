@@ -49,7 +49,7 @@ EXPERIMENTS_ROOT = Path("experiments")
 CLASS_CONFIG = Path("configs/classes.yaml")
 CAMERAS_CONFIG = Path("configs/cameras.yaml")
 APP_CONFIG = Path("configs/app.yaml")
-DEFAULT_CONFIDENCE = 0.25
+DEFAULT_CONFIDENCE = 0.5
 DEFAULT_IOU = 0.45
 
 DEFAULT_CAMERA_GROUPS = {
@@ -217,7 +217,11 @@ def _validate_weights_path(path: str) -> str:
 
 
 def _find_default_weights() -> str | None:
-    """Return the best.pt path from the first experiment found, or None."""
+    """Return best.pt from the preferred experiment, falling back to the first found."""
+    preferred = "baseline_yolo11n_v2_e80-2"
+    preferred_path = EXPERIMENTS_ROOT / preferred / "weights" / "best.pt"
+    if preferred_path.exists():
+        return str(preferred_path.resolve())
     records = collect_experiment_records(str(EXPERIMENTS_ROOT))
     if not records:
         return None
@@ -776,7 +780,7 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
                 "rtsp_url": _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT),
                 "note": custom.get("note", "") if custom else "",
                 "custom": False,
-                "_status": "connected" if ip == streaming_ip else "disconnected",
+                "_status": "connected" if ip == streaming_ip else "unknown",
             }
             if include_credentials:
                 cam["username"] = DEFAULT_RTSP_USERNAME
@@ -795,7 +799,7 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
             "rtsp_url": _build_rtsp_url(cam["ip"], cam.get("username", DEFAULT_RTSP_USERNAME), cam.get("password", DEFAULT_RTSP_PASSWORD), cam.get("port", DEFAULT_RTSP_PORT)),
             "note": cam.get("note", ""),
             "custom": True,
-            "_status": "connected" if cam["ip"] == streaming_ip else "disconnected",
+            "_status": "connected" if cam["ip"] == streaming_ip else "unknown",
         }
         if include_credentials:
             entry["username"] = cam.get("username", DEFAULT_RTSP_USERNAME)

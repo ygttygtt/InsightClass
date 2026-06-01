@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+# Fix Windows asyncio ProactorEventLoop crash when client disconnects
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from insightclass.backends.factory import build_backend
 from insightclass.data.manifest import create_manifest, load_manifest, save_manifest
@@ -63,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser = subparsers.add_parser("serve", help="Start the web server")
     serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     serve_parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    serve_parser.add_argument("--https", action="store_true", help="Enable HTTPS with auto-generated self-signed cert (enables webcam on LAN)")
     serve_parser.add_argument("--experiments-root", default="experiments", help="Experiments directory (default: experiments)")
 
     compare_parser = subparsers.add_parser("compare-experiments", help="Export experiment summary CSV")
@@ -88,6 +95,37 @@ def _load_class_names(path: str) -> tuple[list[str], dict[str, str]]:
     if not isinstance(classes, list):
         raise ValueError("class config 'classes' must be a list")
     return [str(item) for item in classes], {str(key): str(value) for key, value in display_names.items()}
+
+
+def _generate_self_signed_cert(cert_path: str, key_path: str):
+    """Generate a self-signed certificate using Python's cryptography library."""
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import datetime
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "InsightClass"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "InsightClass"),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=365))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.DNSName("*")]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    print("Generating self-signed certificate...")
+    with open(key_path, "wb") as f:
+        f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
+    with open(cert_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -217,9 +255,30 @@ def main(argv: list[str] | None = None) -> int:
         # Override module-level configs from CLI args
         import insightclass.web.server as server_mod
         server_mod.EXPERIMENTS_ROOT = Path(args.experiments_root)
-        print(f"Starting InsightClass web server on http://{args.host}:{args.port}")
-        print(f"Experiments root: {Path(args.experiments_root).resolve()}")
-        uvicorn.run(app, host=args.host, port=args.port)
+
+        ssl_certfile = None
+        ssl_keyfile = None
+
+        if args.https:
+            ssl_dir = Path("configs/ssl")
+            ssl_dir.mkdir(parents=True, exist_ok=True)
+            ssl_certfile = str(ssl_dir / "cert.pem")
+            ssl_keyfile = str(ssl_dir / "key.pem")
+            if not Path(ssl_certfile).exists():
+                _generate_self_signed_cert(ssl_certfile, ssl_keyfile)
+                print(f"Certificate saved to {ssl_dir.resolve()}")
+
+            host_display = "localhost" if args.host == "0.0.0.0" else args.host
+            print(f"Starting InsightClass web server on https://{host_display}:{args.port}")
+            print(f"Experiments root: {Path(args.experiments_root).resolve()}")
+            print(f"NOTE: Browser will show a security warning for self-signed cert. Click 'Advanced' → 'Proceed'.")
+            uvicorn.run(app, host=args.host, port=args.port,
+                        ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
+        else:
+            host_display = "localhost" if args.host == "0.0.0.0" else args.host
+            print(f"Starting InsightClass web server on http://{host_display}:{args.port}")
+            print(f"Experiments root: {Path(args.experiments_root).resolve()}")
+            uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
     parser.error(f"Unknown command: {args.command}")
