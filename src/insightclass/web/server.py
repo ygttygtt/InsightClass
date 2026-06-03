@@ -67,6 +67,7 @@ DEFAULT_RTSP_PASSWORD = os.environ.get("RTSP_PASSWORD", "1000phone")
 DEFAULT_RTSP_PORT = 554
 
 _rtsp_lock = threading.Lock()
+_FFMPEG_OPTIONS = "rtsp_transport;tcp"
 
 
 class RtspStreamManager:
@@ -115,12 +116,16 @@ class RtspStreamManager:
     def get_status(self) -> dict:
         return {"status": self._status, "error": self._error}
 
-    def _capture_loop(self):
+    def _open_capture(self):
+        """Create a VideoCapture with short timeout."""
         with _rtsp_lock:
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = _FFMPEG_OPTIONS
+        self._cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+
+    def _capture_loop(self):
         try:
-            self._cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
-            if not self._cap.isOpened():
+            self._open_capture()
+            if not self._cap or not self._cap.isOpened():
                 self._status = "error"
                 self._error = "无法连接摄像头，请检查 IP 地址和网络"
                 self._running = False
@@ -132,11 +137,20 @@ class RtspStreamManager:
                 if not ret or frame is None:
                     fail_count += 1
                     if fail_count > 50:  # ~5 seconds of failures
-                        # Attempt reconnect
-                        self._cap.release()
-                        time.sleep(1)
-                        self._cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
-                        if not self._cap.isOpened():
+                        # Attempt reconnect with retries
+                        reconnected = False
+                        for _ in range(3):
+                            if not self._running:
+                                return
+                            if self._cap:
+                                self._cap.release()
+                                self._cap = None
+                            time.sleep(2)
+                            self._open_capture()
+                            if self._cap and self._cap.isOpened():
+                                reconnected = True
+                                break
+                        if not reconnected:
                             self._status = "error"
                             self._error = "摄像头连接中断，重连失败"
                             self._running = False
@@ -327,9 +341,10 @@ def _extract_detections(result, display_names: dict[str, str]) -> list[Detection
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Defer model loading to background so the server starts accepting connections immediately
     default_weights = _find_default_weights()
     if default_weights:
-        preload_model(default_weights)
+        asyncio.get_event_loop().run_in_executor(None, preload_model, default_weights)
     yield
     clear_cache()
 
@@ -924,7 +939,7 @@ async def test_cameras(request: Request):
 def _test_camera_connection(rtsp_url: str) -> bool:
     try:
         with _rtsp_lock:
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = _FFMPEG_OPTIONS
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         if not cap.isOpened():
             return False

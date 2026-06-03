@@ -463,6 +463,13 @@ async function startMonitor() {
 
   const rtspUrl = state.selectedCamera.rtsp_url;
   els.image.src = '/api/stream/rtsp?rtsp_url=' + encodeURIComponent(rtspUrl);
+  els.image.onerror = () => {
+    if (state.streaming) {
+      state.streaming = false;
+      _showToast('视频流断开，正在重连...');
+      _attemptReconnect();
+    }
+  };
 
   // Poll stream status
   let connected = false;
@@ -490,7 +497,51 @@ async function startMonitor() {
   }
 
   state.streaming = true;
+  _startStreamHealthCheck();
   _showToast('摄像头已连接，点击「开始检测」启动 AI 识别');
+}
+
+// ---- Stream Health Check & Auto-Reconnect ----
+let _healthTimer = null;
+let _reconnecting = false;
+
+function _startStreamHealthCheck() {
+  if (_healthTimer) clearInterval(_healthTimer);
+  _healthTimer = setInterval(async () => {
+    if (!state.streaming) {
+      clearInterval(_healthTimer);
+      _healthTimer = null;
+      return;
+    }
+    try {
+      const st = await fetch('/api/stream/status').then(r => r.json());
+      if (st.status === 'error' || st.status === 'idle') {
+        clearInterval(_healthTimer);
+        _healthTimer = null;
+        state.streaming = false;
+        _showToast('摄像头连接断开，正在重连...');
+        _attemptReconnect();
+      }
+    } catch (e) { /* ignore */ }
+  }, 5000);
+}
+
+async function _attemptReconnect() {
+  if (_reconnecting) return;
+  _reconnecting = true;
+  try {
+    await new Promise(r => setTimeout(r, 2000));
+    if (state.selectedCamera && state.source === 'rtsp') {
+      const wasDetecting = state.detecting;
+      stopDetection();
+      await startMonitor();
+      if (wasDetecting && state.streaming) {
+        startDetection();
+      }
+    }
+  } finally {
+    _reconnecting = false;
+  }
 }
 
 // ---- RTSP Detection (overlay on existing stream) ----
@@ -745,6 +796,7 @@ async function detectImage() {
 
 // ---- Stop ----
 function stopAll() {
+  if (_healthTimer) { clearInterval(_healthTimer); _healthTimer = null; }
   stopDetection();
   state.streaming = false;
   state.selectedCamera = null;
