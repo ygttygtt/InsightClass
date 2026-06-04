@@ -254,13 +254,19 @@ def main(argv: list[str] | None = None) -> int:
 
         # Override module-level configs from CLI args
         import insightclass.web.server as server_mod
-        server_mod.EXPERIMENTS_ROOT = Path(args.experiments_root)
+        # 只在用户显式指定 --experiments-root 时覆盖（非默认值时）
+        if args.experiments_root != "experiments":
+            server_mod.EXPERIMENTS_ROOT = Path(args.experiments_root)
 
         ssl_certfile = None
         ssl_keyfile = None
 
         if args.https:
-            ssl_dir = Path("configs/ssl")
+            # 打包模式下 SSL 证书放在 exe 同目录的 configs/ssl/
+            if getattr(sys, 'frozen', False):
+                ssl_dir = Path(sys.executable).parent / "configs" / "ssl"
+            else:
+                ssl_dir = Path("configs/ssl")
             ssl_dir.mkdir(parents=True, exist_ok=True)
             ssl_certfile = str(ssl_dir / "cert.pem")
             ssl_keyfile = str(ssl_dir / "key.pem")
@@ -270,14 +276,14 @@ def main(argv: list[str] | None = None) -> int:
 
             host_display = "localhost" if args.host == "0.0.0.0" else args.host
             print(f"Starting InsightClass web server on https://{host_display}:{args.port}")
-            print(f"Experiments root: {Path(args.experiments_root).resolve()}")
+            print(f"Experiments root: {server_mod.EXPERIMENTS_ROOT.resolve()}")
             print(f"NOTE: Browser will show a security warning for self-signed cert. Click 'Advanced' → 'Proceed'.")
             uvicorn.run(app, host=args.host, port=args.port,
                         ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
         else:
             host_display = "localhost" if args.host == "0.0.0.0" else args.host
             print(f"Starting InsightClass web server on http://{host_display}:{args.port}")
-            print(f"Experiments root: {Path(args.experiments_root).resolve()}")
+            print(f"Experiments root: {server_mod.EXPERIMENTS_ROOT.resolve()}")
             uvicorn.run(app, host=args.host, port=args.port)
         return 0
 

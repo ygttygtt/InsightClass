@@ -1706,9 +1706,6 @@ function showCameraModal(cam) {
     ipInput.disabled = true;
     ipInput.style.opacity = '0.5';
     $('#cam-name').value = cam.name || '';
-    $('#cam-username').value = cam.username || 'admin';
-    $('#cam-password').value = cam.password || '';
-    $('#cam-port').value = cam.port || 554;
     $('#cam-note').value = cam.note || '';
   } else {
     _camEditIp = null;
@@ -1717,9 +1714,6 @@ function showCameraModal(cam) {
     ipInput.disabled = false;
     ipInput.style.opacity = '';
     $('#cam-name').value = '';
-    $('#cam-username').value = '';
-    $('#cam-password').value = '';
-    $('#cam-port').value = '554';
     $('#cam-note').value = '';
   }
   modal.classList.remove('hidden');
@@ -1738,9 +1732,6 @@ async function saveCameraForm() {
   const body = {
     ip,
     name: $('#cam-name').value.trim(),
-    username: $('#cam-username').value.trim() || 'admin',
-    password: $('#cam-password').value.trim() || '',
-    port: parseInt($('#cam-port').value) || 554,
     note: $('#cam-note').value.trim(),
   };
   try {
@@ -1860,3 +1851,101 @@ if (_saved.model) {
 }
 loadCameras();
 if (!DEFAULT_MODEL) console.warn('No trained models found in experiments/');
+
+
+// ---- Settings Modal (Global Credentials + CSV Import) ----
+
+function showSettingsModal() {
+  $('#settings-modal').classList.remove('hidden');
+  loadRtspCredentials();
+}
+
+function hideSettingsModal() {
+  $('#settings-modal').classList.add('hidden');
+}
+
+async function loadRtspCredentials() {
+  try {
+    const res = await fetch('/api/settings/rtsp-credentials');
+    if (res.ok) {
+      const data = await res.json();
+      $('#settings-username').value = data.username || '';
+      $('#settings-password').value = data.password || '';
+      $('#settings-port').value = data.port || 554;
+    }
+  } catch (e) {
+    console.warn('Failed to load RTSP credentials:', e);
+  }
+}
+
+async function saveRtspCredentials() {
+  const username = $('#settings-username').value.trim();
+  const password = $('#settings-password').value;
+  const port = parseInt($('#settings-port').value) || 554;
+  try {
+    const res = await fetch('/api/settings/rtsp-credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, port }),
+    });
+    if (res.ok) {
+      alert('凭据已保存');
+    } else {
+      const err = await res.json();
+      alert(err.error || '保存失败');
+    }
+  } catch (e) {
+    alert('保存失败: ' + e.message);
+  }
+}
+
+async function importCsvCameras(file) {
+  const resultDiv = $('#csv-import-result');
+  resultDiv.style.display = 'block';
+  resultDiv.style.background = 'var(--bg-secondary)';
+  resultDiv.style.color = 'var(--text-secondary)';
+  resultDiv.textContent = '导入中...';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch('/api/cameras/import', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      resultDiv.style.background = 'rgba(34, 197, 94, 0.1)';
+      resultDiv.style.color = '#22c55e';
+      let msg = `导入完成：新增 ${data.imported} 台`;
+      if (data.skipped > 0) msg += `，跳过 ${data.skipped} 台（已存在）`;
+      if (data.errors && data.errors.length > 0) msg += `，${data.errors.length} 个错误`;
+      resultDiv.textContent = msg;
+      loadCameras(); // Refresh camera list
+    } else {
+      resultDiv.style.background = 'rgba(239, 68, 68, 0.1)';
+      resultDiv.style.color = '#ef4444';
+      resultDiv.textContent = data.error || '导入失败';
+    }
+  } catch (e) {
+    resultDiv.style.background = 'rgba(239, 68, 68, 0.1)';
+    resultDiv.style.color = '#ef4444';
+    resultDiv.textContent = '导入失败: ' + e.message;
+  }
+}
+
+// Settings modal events
+$('#btn-settings').addEventListener('click', showSettingsModal);
+$('#settings-modal-close').addEventListener('click', hideSettingsModal);
+$('#settings-modal .cam-modal-backdrop').addEventListener('click', hideSettingsModal);
+$('#btn-save-credentials').addEventListener('click', saveRtspCredentials);
+$('#csv-input').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) importCsvCameras(file);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#settings-modal').classList.contains('hidden')) {
+    hideSettingsModal();
+  }
+});

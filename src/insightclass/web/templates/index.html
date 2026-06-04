@@ -190,6 +190,9 @@
     <div class="right-sidebar-header">
       <span class="right-sidebar-title">摄像头</span>
       <div class="cam-actions">
+        <button class="cam-action-btn" id="btn-settings" title="设置（凭据/导入）">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </button>
         <button class="cam-action-btn" id="btn-test-cameras" title="测试连通性">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         </button>
@@ -275,20 +278,6 @@
         <label>别名</label>
         <input type="text" id="cam-name" placeholder="如：教室A前摄像头">
       </div>
-      <div class="cam-form-row">
-        <div class="cam-field">
-          <label>用户名</label>
-          <input type="text" id="cam-username" placeholder="admin">
-        </div>
-        <div class="cam-field">
-          <label>密码</label>
-          <input type="password" id="cam-password" placeholder="password">
-        </div>
-      </div>
-      <div class="cam-field">
-        <label>端口</label>
-        <input type="number" id="cam-port" value="554" placeholder="554">
-      </div>
       <div class="cam-field">
         <label>备注</label>
         <input type="text" id="cam-note" placeholder="教室名称或位置描述">
@@ -297,6 +286,49 @@
     <div class="cam-modal-footer">
       <button class="cam-btn cam-btn-cancel" id="cam-form-cancel">取消</button>
       <button class="cam-btn cam-btn-save" id="cam-form-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div id="settings-modal" class="cam-modal hidden">
+  <div class="cam-modal-backdrop"></div>
+  <div class="cam-modal-dialog" style="max-width: 500px;">
+    <div class="cam-modal-header">
+      <span>设置</span>
+      <button class="cam-modal-close" id="settings-modal-close">&times;</button>
+    </div>
+    <div class="cam-modal-body">
+      <div style="margin-bottom: 20px;">
+        <h4 style="margin: 0 0 12px; font-size: 14px; color: var(--text-secondary);">RTSP 全局凭据</h4>
+        <p style="margin: 0 0 12px; font-size: 12px; color: var(--text-muted);">所有摄像头共用同一套凭据，可在 CSV 导入后统一设置。</p>
+        <div class="cam-form-row">
+          <div class="cam-field">
+            <label>用户名</label>
+            <input type="text" id="settings-username" placeholder="admin">
+          </div>
+          <div class="cam-field">
+            <label>密码</label>
+            <input type="password" id="settings-password" placeholder="password">
+          </div>
+        </div>
+        <div class="cam-field">
+          <label>RTSP 端口</label>
+          <input type="number" id="settings-port" value="554" placeholder="554">
+        </div>
+        <button class="cam-btn cam-btn-save" id="btn-save-credentials" style="width: auto; padding: 6px 16px;">保存凭据</button>
+      </div>
+      <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
+      <div>
+        <h4 style="margin: 0 0 12px; font-size: 14px; color: var(--text-secondary);">批量导入摄像头</h4>
+        <p style="margin: 0 0 12px; font-size: 12px; color: var(--text-muted);">支持海康威视导出的 CSV 文件（GB2312 编码），自动提取 IP 地址列。</p>
+        <label class="upload-zone upload-zone-sm" id="csv-drop" style="margin-bottom: 12px;">
+          <input type="file" id="csv-input" accept=".csv">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span>点击选择 CSV 文件</span>
+        </label>
+        <div id="csv-import-result" style="display: none; font-size: 13px; padding: 8px 12px; border-radius: 6px; margin-top: 8px;"></div>
+      </div>
     </div>
   </div>
 </div>

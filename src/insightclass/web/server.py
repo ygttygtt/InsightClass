@@ -9,6 +9,7 @@ import os
 import random
 import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -45,25 +46,34 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
-EXPERIMENTS_ROOT = Path("experiments")
-CLASS_CONFIG = Path("configs/classes.yaml")
-CAMERAS_CONFIG = Path("configs/cameras.yaml")
-APP_CONFIG = Path("configs/app.yaml")
+
+def _get_base_dir() -> Path:
+    """打包后返回 exe 所在目录，开发模式返回 cwd。"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    return Path.cwd()
+
+
+def _get_resource_dir() -> Path:
+    """打包后返回内部资源目录（_MEIPASS），开发模式返回项目根目录。"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys._MEIPASS)
+    # 开发模式：从 src/insightclass/web/server.py 向上 4 级到项目根
+    return Path(__file__).parent.parent.parent.parent
+
+
+_BASE_DIR = _get_base_dir()
+_RESOURCE_DIR = _get_resource_dir()
+EXPERIMENTS_ROOT = _BASE_DIR / "experiments"
+CLASS_CONFIG = _BASE_DIR / "configs" / "classes.yaml"
+CAMERAS_CONFIG = _BASE_DIR / "configs" / "cameras.yaml"
+APP_CONFIG = _BASE_DIR / "configs" / "app.yaml"
 DEFAULT_CONFIDENCE = 0.5
 DEFAULT_IOU = 0.45
 
-DEFAULT_CAMERA_GROUPS = {
-    "front": [
-        "10.8.14.36", "10.8.14.34", "10.8.14.30", "10.8.14.10",
-        "10.8.14.18", "10.8.14.26", "10.8.14.28",
-    ],
-    "rear": [
-        "10.8.14.5", "10.8.14.29", "10.8.14.21", "10.8.14.19",
-        "10.8.14.17", "10.8.14.11", "10.8.14.22", "10.8.14.24", "10.8.14.32",
-    ],
-}
-DEFAULT_RTSP_USERNAME = os.environ.get("RTSP_USERNAME", "admin")
-DEFAULT_RTSP_PASSWORD = os.environ.get("RTSP_PASSWORD", "1000phone")
+# RTSP 默认凭据（可通过 Web 界面全局设置）
+DEFAULT_RTSP_USERNAME = "admin"
+DEFAULT_RTSP_PASSWORD = ""
 DEFAULT_RTSP_PORT = 554
 
 _rtsp_lock = threading.Lock()
@@ -221,21 +231,37 @@ _dashboard_stats = DashboardStats()
 
 
 def _validate_weights_path(path: str) -> str:
-    """Restrict model paths to experiments directory."""
+    """Restrict model paths to experiments or models directory."""
     p = Path(path).resolve()
     if not str(p).endswith(".pt"):
         raise ValueError("Only .pt weight files are allowed")
-    if EXPERIMENTS_ROOT.resolve() not in p.parents and p.parent.resolve() != EXPERIMENTS_ROOT.resolve():
-        raise ValueError(f"Model path must be under {EXPERIMENTS_ROOT}")
-    return str(p)
+    # 允许 experiments/ 目录
+    if EXPERIMENTS_ROOT.resolve() in p.parents or p.parent.resolve() == EXPERIMENTS_ROOT.resolve():
+        return str(p)
+    # 允许内置 models/ 目录
+    bundled_models = (_RESOURCE_DIR / "models").resolve()
+    if bundled_models in p.parents or p.parent.resolve() == bundled_models:
+        return str(p)
+    # 允许用户目录下的 models/
+    user_models = (_BASE_DIR / "models").resolve()
+    if user_models in p.parents or p.parent.resolve() == user_models:
+        return str(p)
+    raise ValueError(f"Model path must be under {EXPERIMENTS_ROOT} or models/")
 
 
 def _find_default_weights() -> str | None:
-    """Return best.pt from the preferred experiment, falling back to the first found."""
-    preferred = "baseline_yolo11n_v2_e80-2"
-    preferred_path = EXPERIMENTS_ROOT / preferred / "weights" / "best.pt"
-    if preferred_path.exists():
-        return str(preferred_path.resolve())
+    """Return best.pt: prefer bundled model, then experiments."""
+    # 优先使用内置模型（打包时打入的）
+    bundled = _RESOURCE_DIR / "models" / "best.pt"
+    if bundled.exists():
+        return str(bundled.resolve())
+    # 回退：用户目录下的 models/
+    user_models = _BASE_DIR / "models" / "best.pt"
+    if user_models.exists():
+        return str(user_models.resolve())
+    # 回退：从 experiments 目录查找
+    if not EXPERIMENTS_ROOT.exists():
+        return None
     records = collect_experiment_records(str(EXPERIMENTS_ROOT))
     if not records:
         return None
@@ -292,7 +318,24 @@ def _get_default_model() -> str:
     return cfg.get("default_model", "")
 
 
-def _build_rtsp_url(ip: str, username: str, password: str, port: int) -> str:
+def _get_rtsp_credentials() -> dict:
+    """获取全局 RTSP 凭据（从 app.yaml 读取，支持 Web 界面设置）。"""
+    cfg = _load_app_config()
+    creds = cfg.get("rtsp_credentials", {})
+    return {
+        "username": creds.get("username", DEFAULT_RTSP_USERNAME),
+        "password": creds.get("password", DEFAULT_RTSP_PASSWORD),
+        "port": creds.get("port", DEFAULT_RTSP_PORT),
+    }
+
+
+def _build_rtsp_url(ip: str, username: str = "", password: str = "", port: int = 0) -> str:
+    """构建 RTSP URL。如果不传凭据，使用全局凭据。"""
+    if not username:
+        creds = _get_rtsp_credentials()
+        username = creds["username"]
+        password = creds["password"]
+        port = port or creds["port"]
     return f"rtsp://{username}:{password}@{ip}:{port}/Streaming/Channels/101"
 
 
@@ -766,60 +809,36 @@ def _batch_response(job: dict) -> dict:
 
 
 def _build_camera_list(include_credentials: bool = False) -> list[dict]:
-    # Build a lookup of custom camera entries by IP for alias merging
+    """构建摄像头列表（从 cameras.yaml 读取）。"""
     custom_cameras = _load_custom_cameras()
-    custom_by_ip = {c["ip"]: c for c in custom_cameras}
-
-    # Set of all default camera IPs for filtering
-    default_ips = set()
-    for ips in DEFAULT_CAMERA_GROUPS.values():
-        default_ips.update(ips)
+    creds = _get_rtsp_credentials()
 
     # Determine which IP is currently streaming (if any)
     streaming_ip = None
     if _stream_manager._url and _stream_manager._status in ("connecting", "streaming"):
-        # Extract IP from rtsp://user:pass@IP:port/...
         _m = re.search(r"@(\d+\.\d+\.\d+\.\d+)", _stream_manager._url)
         if _m:
             streaming_ip = _m.group(1)
 
     cameras = []
-    for group, ips in DEFAULT_CAMERA_GROUPS.items():
-        for ip in ips:
-            custom = custom_by_ip.get(ip)
-            cam = {
-                "ip": ip,
-                "name": custom.get("name", "") if custom else "",
-                "group": group,
-                "group_label": "前视角" if group == "front" else "后视角",
-                "rtsp_url": _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT),
-                "note": custom.get("note", "") if custom else "",
-                "custom": False,
-                "_status": "connected" if ip == streaming_ip else "unknown",
-            }
-            if include_credentials:
-                cam["username"] = DEFAULT_RTSP_USERNAME
-                cam["password"] = DEFAULT_RTSP_PASSWORD
-                cam["port"] = DEFAULT_RTSP_PORT
-            cameras.append(cam)
     for cam in custom_cameras:
-        # Skip custom entries that are just alias overrides for default cameras
-        if cam["ip"] in default_ips:
+        ip = cam.get("ip", "")
+        if not ip:
             continue
         entry = {
-            "ip": cam["ip"],
+            "ip": ip,
             "name": cam.get("name", ""),
             "group": cam.get("group", "custom"),
-            "group_label": cam.get("note", "自定义") or "自定义",
-            "rtsp_url": _build_rtsp_url(cam["ip"], cam.get("username", DEFAULT_RTSP_USERNAME), cam.get("password", DEFAULT_RTSP_PASSWORD), cam.get("port", DEFAULT_RTSP_PORT)),
+            "group_label": cam.get("group_label", "自定义"),
+            "rtsp_url": _build_rtsp_url(ip),
             "note": cam.get("note", ""),
             "custom": True,
-            "_status": "connected" if cam["ip"] == streaming_ip else "unknown",
+            "_status": "connected" if ip == streaming_ip else "unknown",
         }
         if include_credentials:
-            entry["username"] = cam.get("username", DEFAULT_RTSP_USERNAME)
-            entry["password"] = cam.get("password", DEFAULT_RTSP_PASSWORD)
-            entry["port"] = cam.get("port", DEFAULT_RTSP_PORT)
+            entry["username"] = creds["username"]
+            entry["password"] = creds["password"]
+            entry["port"] = creds["port"]
         cameras.append(entry)
     return cameras
 
@@ -835,21 +854,14 @@ async def add_camera(request: Request):
     ip = body.get("ip", "").strip()
     if not ip:
         return JSONResponse({"error": "IP is required"}, status_code=400)
-    # Check if IP is a default camera
-    default_ips = set()
-    for ips in DEFAULT_CAMERA_GROUPS.values():
-        default_ips.update(ips)
-    if ip in default_ips:
-        return JSONResponse({"error": f"Camera {ip} is a built-in camera, use edit to change its alias"}, status_code=409)
     cameras = _load_custom_cameras()
     if any(c["ip"] == ip for c in cameras):
         return JSONResponse({"error": f"Camera {ip} already exists"}, status_code=409)
     cam = {
         "ip": ip,
         "name": body.get("name", "").strip(),
-        "username": body.get("username", DEFAULT_RTSP_USERNAME),
-        "password": body.get("password", DEFAULT_RTSP_PASSWORD),
-        "port": body.get("port", DEFAULT_RTSP_PORT),
+        "group": body.get("group", "custom"),
+        "group_label": body.get("group_label", "自定义"),
         "note": body.get("note", ""),
     }
     cameras.append(cam)
@@ -863,30 +875,12 @@ async def update_camera(ip: str, request: Request):
     cameras = _load_custom_cameras()
     idx = next((i for i, c in enumerate(cameras) if c["ip"] == ip), None)
 
-    # Check if this is a default camera (not yet in custom list)
-    default_ips = set()
-    for ips in DEFAULT_CAMERA_GROUPS.values():
-        default_ips.update(ips)
-    is_default = ip in default_ips
-
     if idx is not None:
-        # Update existing custom entry
         cameras[idx].update({
             "name": body.get("name", cameras[idx].get("name", "")),
-            "username": body.get("username", cameras[idx].get("username", DEFAULT_RTSP_USERNAME)),
-            "password": body.get("password", cameras[idx].get("password", DEFAULT_RTSP_PASSWORD)),
-            "port": body.get("port", cameras[idx].get("port", DEFAULT_RTSP_PORT)),
+            "group": body.get("group", cameras[idx].get("group", "custom")),
+            "group_label": body.get("group_label", cameras[idx].get("group_label", "自定义")),
             "note": body.get("note", cameras[idx].get("note", "")),
-        })
-    elif is_default:
-        # Create a custom entry to store alias/overrides for a default camera
-        cameras.append({
-            "ip": ip,
-            "name": body.get("name", ""),
-            "username": body.get("username", DEFAULT_RTSP_USERNAME),
-            "password": body.get("password", DEFAULT_RTSP_PASSWORD),
-            "port": body.get("port", DEFAULT_RTSP_PORT),
-            "note": body.get("note", ""),
         })
     else:
         return JSONResponse({"error": "Camera not found"}, status_code=404)
@@ -1137,3 +1131,114 @@ async def dashboard_history():
             })
         history[ip] = points
     return JSONResponse({"history": history, "simulated": True})
+
+
+# ---- Global RTSP Credentials ----
+
+@app.get("/api/settings/rtsp-credentials")
+async def get_rtsp_credentials():
+    """获取全局 RTSP 凭据。"""
+    creds = _get_rtsp_credentials()
+    return JSONResponse(creds)
+
+
+@app.post("/api/settings/rtsp-credentials")
+async def set_rtsp_credentials(request: Request):
+    """设置全局 RTSP 凭据。"""
+    body = await request.json()
+    cfg = _load_app_config()
+    cfg["rtsp_credentials"] = {
+        "username": body.get("username", DEFAULT_RTSP_USERNAME),
+        "password": body.get("password", DEFAULT_RTSP_PASSWORD),
+        "port": body.get("port", DEFAULT_RTSP_PORT),
+    }
+    _save_app_config(cfg)
+    return JSONResponse({"ok": True})
+
+
+# ---- CSV Import Cameras ----
+
+@app.post("/api/cameras/import")
+async def import_cameras_csv(file: UploadFile = File(...)):
+    """上传 CSV 文件批量导入摄像头（支持海康威视导出格式）。
+
+    CSV 格式（GB2312/GBK 编码）：
+    - 设备类型, 设备别名, IP地址, 端口号, 设备序列号
+    - 我们只提取 IP地址 列
+    """
+    try:
+        contents = await file.read()
+
+        # 尝试多种编码解码
+        text = None
+        for encoding in ['gb18030', 'gbk', 'gb2312', 'utf-8-sig', 'utf-8']:
+            try:
+                text = contents.decode(encoding)
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        if text is None:
+            return JSONResponse({"error": "无法解码文件，请确保是 GB2312/GBK/UTF-8 编码的 CSV"}, status_code=400)
+
+        # 解析 CSV
+        reader = csv.reader(io.StringIO(text))
+        rows = list(reader)
+        if len(rows) < 2:
+            return JSONResponse({"error": "CSV 文件为空或只有表头"}, status_code=400)
+
+        # 查找 IP 地址列
+        header = rows[0]
+        ip_col = None
+        for i, col in enumerate(header):
+            col_stripped = col.strip()
+            if col_stripped in ('IP地址', 'IP', 'ip', 'IP地址', 'ip地址'):
+                ip_col = i
+                break
+        if ip_col is None:
+            # 如果找不到列名，尝试第三列（海康格式的第三列是 IP）
+            if len(header) >= 3:
+                ip_col = 2
+            else:
+                return JSONResponse({"error": "CSV 中找不到 IP 地址列"}, status_code=400)
+
+        # 提取 IP 地址
+        existing_cameras = _load_custom_cameras()
+        existing_ips = {c["ip"] for c in existing_cameras}
+        imported = 0
+        skipped = 0
+        errors = []
+
+        for row_idx, row in enumerate(rows[1:], start=2):
+            if len(row) <= ip_col:
+                continue
+            ip = row[ip_col].strip()
+            if not ip:
+                continue
+            # 验证 IP 格式（简单的 IP 正则）
+            if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+                errors.append(f"第 {row_idx} 行: 无效 IP '{ip}'")
+                continue
+            if ip in existing_ips:
+                skipped += 1
+                continue
+            existing_cameras.append({
+                "ip": ip,
+                "name": "",
+                "group": "custom",
+                "group_label": "自定义",
+                "note": f"CSV 导入 (行 {row_idx})",
+            })
+            existing_ips.add(ip)
+            imported += 1
+
+        _save_custom_cameras(existing_cameras)
+        return JSONResponse({
+            "ok": True,
+            "imported": imported,
+            "skipped": skipped,
+            "errors": errors,
+            "total_in_csv": len(rows) - 1,
+        })
+    except Exception as e:
+        logger.warning("CSV import failed: %s", e)
+        return JSONResponse({"error": f"导入失败: {str(e)}"}, status_code=500)
