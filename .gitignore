@@ -89,10 +89,13 @@ configs/app.yaml
 # SSL certificates (auto-generated)
 configs/ssl/
 
-# 发行版文件（通过 Release 发布）
-releases/*.exe
-releases/*.zip
+# 发行版文件（通过 GitHub/Gitee Release 发布，不纳入 git）
+releases/
 
-# 发行版文件（通过 Release 发布）
-releases/*.exe
-releases/*.zip
+# 标注中间数据
+data/labeling/
+
+# 打包过程文件
+build/
+dist/
+packaging/
