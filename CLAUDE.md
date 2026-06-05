@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-InsightClass is a classroom student behavior detection pipeline. It detects three behaviors from front-of-classroom camera footage: `phone_use` (玩手机), `talking` (交谈), `sleeping` (打瞌睡). The project follows a src-layout and is configured via YAML files.
+InsightClass is a classroom student behavior detection pipeline. It detects four behaviors from front-of-classroom camera footage: `phone_use` (玩手机), `talking` (交谈), `sleeping` (打瞌睡), `standing` (站立). The project follows a src-layout and is configured via YAML files.
 
 **Conda environment**: 所有命令应在你的 conda 环境中运行（各成员环境名不同，以下用 `<your-env-name>` 代替）：
 ```
@@ -48,8 +48,11 @@ insightclass render-first-frame --config <same>
 # Experiment analysis
 insightclass compare-experiments --experiments-root experiments --output reports/experiment_summary.csv
 
-# Web server
+# Web servers (3 separate FastAPI apps)
 insightclass serve --host 0.0.0.0 --port 8000 --experiments-root experiments
+insightclass serve --https  # auto-generates self-signed cert at configs/ssl/ (needed for webcam on LAN)
+insightclass view-experiments --experiments-root experiments --port 8001
+insightclass demo --experiments-root experiments --port 8000
 ```
 
 ## Architecture
@@ -63,7 +66,7 @@ The central extensibility point. `backends/base.py` defines `DetectorBackend` AB
 Strictly sequential, CLI-driven:
 
 1. **create-manifest** — scans `data/raw_videos/`, does VIDEO-level train/val/test split (fixed seed), outputs `manifest.yaml`
-2. **extract-frames** — cv2 reads each video, samples at given FPS, resizes to `target_width` (default 960), saves JPGs to `images/{split}/`, writes `frame_index.csv`
+2. **extract-frames** — cv2 reads each video, samples at given FPS, resizes to `target_width` (default 960), saves JPGs to `images/{split}/`, writes `frame_index.csv`. Uses seek-based extraction (doesn't decode every frame). Supports `max_frames_per_video` with uniform random sampling.
 3. **[manual annotation]** — external tool (Roboflow/CVAT/Label Studio), outputs YOLO format `.txt` to `labels/{split}/`
 4. **inspect-yolo** — quality checks on labels (missing, empty, out-of-bounds, tiny boxes, class distribution)
 5. **write-yolo-yaml** — generates Ultralytics-compatible dataset config
@@ -72,17 +75,34 @@ Strictly sequential, CLI-driven:
 
 Video-level splitting is a key design decision to prevent data leakage. Same video must not appear in multiple splits.
 
+Implementation lives in `data/manifest.py` (discovery, split, manifest CRUD), `data/video_ops.py` (frame extraction), `data/yolo.py` (label inspection, YAML generation).
+
 ### Optional Dependencies
 
 Lazy-loaded via `optional.py` (`has_package` / `require_package` using `importlib.util.find_spec`). Core package works with just numpy + PyYAML + opencv-python. ultralytics and supervision are optional extras.
 
 ### Web Frontend (`web/`)
 
-FastAPI + Jinja2 server providing a browser-based detection UI. Two detection modes:
-- **Camera**: `getUserMedia` captures frames at 5 FPS → `POST /api/detect/frame` → Canvas overlay
-- **Video upload**: `POST /api/detect/upload` → full inference on server → synced playback with detection overlay
+Three independent FastAPI + Jinja2 apps, each with its own CLI entry point:
 
-Model caching via `model_cache.py` — YOLO instances are cached by weights path, preloaded at startup via lifespan handler.
+| CLI command | Module | Templates | Purpose |
+|---|---|---|---|
+| `serve` | `web/server.py` | `index.html`, `dashboard.html` | Main app: detection, RTSP streaming, camera mgmt, dashboard |
+| `view-experiments` | `web/experiment_viewer.py` | `experiments.html` | Training metrics viewer (results.csv, confusion matrix) |
+| `demo` | `web/demo.py` | `demo.html` | Image detection + training results in one page |
+
+**Main server capabilities** (`insightclass serve`):
+- **Camera detection**: `getUserMedia` → `POST /api/detect/frame` → Canvas overlay
+- **Video upload**: `POST /api/detect/upload` → full inference → synced playback
+- **RTSP streaming**: Persistent `RtspStreamManager` with auto-reconnect, MJPEG streaming (`/api/stream/rtsp`), and detection overlay (`/api/detect/rtsp`)
+- **Batch detection**: Upload multiple videos → background worker → JSON/CSV export (`/api/detect/batch/*`)
+- **Dashboard**: In-memory `DashboardStats` tracking per-camera counts, report export, simulated 24h history
+- **Camera management**: CRUD APIs (`/api/cameras/*`) backed by `cameras.yaml`, CSV import for Hikvision format
+- **RTSP credentials**: Global username/password/port stored in `app.yaml` via `/api/settings/rtsp-credentials`
+
+Model caching via `model_cache.py` — YOLO instances are cached by weights path, preloaded at startup via lifespan handler. Weights path is validated to restrict file access (`_validate_weights_path`).
+
+`web/schemas.py` defines Pydantic API models (`DetectionOut`, `FrameDetectionResponse`, `BatchJob`, etc.) — separate from the core `schemas.py` which uses dataclasses.
 
 ### Key Schemas (`schemas.py`)
 
@@ -90,14 +110,34 @@ All `@dataclass(slots=True)` with `to_dict()`: `DatasetManifest`, `TrainingConfi
 
 ### Config Files (`configs/`)
 
-- `classes.yaml` — canonical class IDs and Chinese display names
+- `classes.yaml` — canonical class IDs (4 classes: `phone_use`, `talking`, `sleeping`, `standing`) and Chinese display names
 - `dataset_manifest.example.yaml` — template for manifest creation (raw_videos_dir, split ratios, class config path)
 - `training.ultralytics.example.yaml` — template for training (backend, weights, imgsz, epochs, batch, device)
 - `inference.ultralytics.example.yaml` — template for inference (weights_path, source, confidence, IoU)
+- `cameras.yaml` — persisted camera list (IP, name, group); managed via web UI
+- `app.yaml` — persisted app settings (default_model path, rtsp_credentials)
+- `ssl/` — self-signed certificate directory (auto-generated on `serve --https`)
+- `inference.yaml`, `training.yaml` — actual working configs (not examples)
+- `inference_baseline.yaml`, `training_v2_*` — experiment-specific configs
+
+### Exceptions (`exceptions.py`)
+
+Custom hierarchy: `InsightClassError` → `ConfigError`, `DependencyMissingError`. Used for config validation and optional dependency checks.
+
+### Scripts (`scripts/`)
+
+Standalone scripts outside the package, not installed:
+- `record_multi_rtsp.py` — multi-camera RTSP recording with front/rear view grouping
+- `rtsp_preview.py` — interactive RTSP camera preview (main/sub stream toggle)
+- `sample_for_annotation.py` — random sampling from train images for external annotation
+
+### Packaging
+
+`InsightClass.spec` — PyInstaller spec for building a standalone Windows `.exe`. Resources (`configs/`, `models/`, `web/templates/`, `web/static/`) are bundled as data files. The `releases/` directory holds published versions.
 
 ## Conventions
 
-- Class IDs are always English (`phone_use`, `talking`, `sleeping`); display names are Chinese, maintained in `classes.yaml`
+- Class IDs are always English (`phone_use`, `talking`, `sleeping`, `standing`); display names are Chinese, maintained in `classes.yaml`
 - All experiment/run directories follow naming: `{stage}_{backend}_{weights}_{dataVersion}_{imgsz}_{epochs}_{tag}`
 - Model weights (`*.pt`, `*.pth`), data directories, and experiment outputs are gitignored
 - Tests use `unittest.TestCase` with `tempfile.TemporaryDirectory` for isolation
