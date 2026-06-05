@@ -88,3 +88,11 @@ configs/app.yaml
 
 # SSL certificates (auto-generated)
 configs/ssl/
+
+# 发行版文件（通过 Release 发布）
+releases/*.exe
+releases/*.zip
+
+# 发行版文件（通过 Release 发布）
+releases/*.exe
+releases/*.zip

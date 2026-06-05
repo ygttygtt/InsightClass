@@ -1,21 +1,19 @@
 # InsightClass Web 打包脚本
-# 用法: .\scripts\build_package.ps1 [-Variant onedir|onefile]
-#   -Variant onedir: 安装版（文件夹形式，默认）
-#   -Variant onefile: 便携版（单文件 exe）
-
-param(
-    [ValidateSet("onedir", "onefile")]
-    [string]$Variant = "onedir"
-)
+# 用法: .\scripts\build_package.ps1
+#
+# 输出:
+#   1. 安装版文件夹: dist\InsightClass-Web\
+#   2. 安装程序: installer_output\InsightClass-Setup.exe (需要 Inno Setup)
+#   3. ZIP 压缩包: InsightClass-Web.zip
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "=== InsightClass Web 打包脚本 ===" -ForegroundColor Cyan
-Write-Host "模式: $Variant" -ForegroundColor Cyan
 
 # 1. 检查必要文件
+Write-Host "`n[1/5] 检查必要文件..." -ForegroundColor Yellow
 $requiredFiles = @(
-    "src\insightclass\__main__.py",
+    "src\insightclass\web\launcher.pyw",
     "configs\classes.yaml",
     "experiments\baseline_yolo11n_v2_e80-2\weights\best.pt"
 )
@@ -25,73 +23,79 @@ foreach ($f in $requiredFiles) {
         exit 1
     }
 }
+Write-Host "  所有必要文件存在" -ForegroundColor Green
 
 # 2. 安装依赖
-Write-Host "`n[1/4] 安装依赖..." -ForegroundColor Yellow
+Write-Host "`n[2/5] 安装依赖..." -ForegroundColor Yellow
 pip install -e ".[web,ultralytics]" --quiet
 pip install cryptography pyinstaller --quiet
+Write-Host "  依赖安装完成" -ForegroundColor Green
 
-# 3. 选择 spec 文件
-if ($Variant -eq "onefile") {
-    $specFile = "InsightClass-Web-Portable.spec"
-    $distDir = "dist\InsightClass-Web-Portable"
-} else {
-    $specFile = "InsightClass-Web.spec"
-    $distDir = "dist\InsightClass-Web"
-}
-
-# 4. 运行 PyInstaller
-Write-Host "`n[2/4] 运行 PyInstaller ($Variant)..." -ForegroundColor Yellow
-pyinstaller $specFile --clean --noconfirm
-
+# 3. 运行 PyInstaller
+Write-Host "`n[3/5] 运行 PyInstaller..." -ForegroundColor Yellow
+python -m PyInstaller InsightClass-Web.spec --clean --noconfirm
 if ($LASTEXITCODE -ne 0) {
     Write-Host "错误: PyInstaller 构建失败" -ForegroundColor Red
     exit 1
 }
+Write-Host "  PyInstaller 构建完成" -ForegroundColor Green
 
-# 5. 复制补充文件到输出目录
-Write-Host "`n[3/4] 复制补充文件..." -ForegroundColor Yellow
+# 4. 复制补充文件
+Write-Host "`n[4/5] 复制补充文件..." -ForegroundColor Yellow
+$distDir = "dist\InsightClass-Web"
 
-if ($Variant -eq "onedir") {
-    # 安装版：创建初始配置文件
-    $configsDir = "$distDir\configs"
-    if (-not (Test-Path $configsDir)) {
-        New-Item -ItemType Directory -Path $configsDir -Force | Out-Null
-    }
-    # classes.yaml 已通过 PyInstaller datas 打包，创建空的 cameras.yaml 和 app.yaml
-    if (-not (Test-Path "$configsDir\cameras.yaml")) {
-        Set-Content -Path "$configsDir\cameras.yaml" -Value "cameras: []" -Encoding UTF8
-    }
-    if (-not (Test-Path "$configsDir\app.yaml")) {
-        Set-Content -Path "$configsDir\app.yaml" -Value "{}" -Encoding UTF8
-    }
-    # 创建 experiments 目录
-    New-Item -ItemType Directory -Path "$distDir\experiments" -Force | Out-Null
+# 创建配置目录和文件
+$configsDir = "$distDir\configs"
+if (-not (Test-Path $configsDir)) {
+    New-Item -ItemType Directory -Path $configsDir -Force | Out-Null
+}
+if (-not (Test-Path "$configsDir\cameras.yaml")) {
+    Set-Content -Path "$configsDir\cameras.yaml" -Value "cameras: []" -Encoding UTF8
+}
+if (-not (Test-Path "$configsDir\app.yaml")) {
+    Set-Content -Path "$configsDir\app.yaml" -Value "{}" -Encoding UTF8
 }
 
-# 6. 验证
-Write-Host "`n[4/4] 验证..." -ForegroundColor Yellow
-if (Test-Path "$distDir\InsightClass.exe") {
-    Write-Host "构建成功!" -ForegroundColor Green
-    Write-Host "输出目录: $distDir" -ForegroundColor Green
+# 创建 experiments 目录
+New-Item -ItemType Directory -Path "$distDir\experiments" -Force | Out-Null
 
-    # 显示文件大小
-    if ($Variant -eq "onefile") {
-        $exeSize = (Get-Item "$distDir\InsightClass-Web-Portable.exe").Length / 1MB
-        Write-Host "exe 大小: $([math]::Round($exeSize, 1)) MB" -ForegroundColor Green
-    } else {
-        $totalSize = (Get-ChildItem $distDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
-        Write-Host "总大小: $([math]::Round($totalSize, 1)) MB" -ForegroundColor Green
-    }
-} else {
-    Write-Host "错误: 找不到输出文件" -ForegroundColor Red
-    exit 1
+# 复制 README
+Copy-Item "packaging\README.txt" "$distDir\" -Force -ErrorAction SilentlyContinue
+
+Write-Host "  补充文件已复制" -ForegroundColor Green
+
+# 5. 创建 ZIP 压缩包
+Write-Host "`n[5/5] 创建 ZIP 压缩包..." -ForegroundColor Yellow
+$zipPath = "InsightClass-Web.zip"
+if (Test-Path $zipPath) {
+    Remove-Item $zipPath -Force
 }
+Compress-Archive -Path "$distDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
+Write-Host "  ZIP 压缩包已创建: $zipPath" -ForegroundColor Green
 
+# 完成
 Write-Host "`n=== 打包完成 ===" -ForegroundColor Cyan
-if ($Variant -eq "onedir") {
-    Write-Host "安装版输出: $distDir" -ForegroundColor Cyan
-    Write-Host "如需生成安装程序，运行: iscc installer.iss" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "输出文件:" -ForegroundColor White
+Write-Host "  1. 安装版文件夹: $distDir\" -ForegroundColor White
+Write-Host "  2. ZIP 压缩包: $zipPath" -ForegroundColor White
+Write-Host ""
+
+# 检查 Inno Setup
+$innoSetup = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if (Test-Path $innoSetup) {
+    Write-Host "检测到 Inno Setup，是否生成安装程序？(Y/N)" -ForegroundColor Yellow
+    $response = Read-Host
+    if ($response -eq 'Y' -or $response -eq 'y') {
+        Write-Host "正在生成安装程序..." -ForegroundColor Yellow
+        & $innoSetup installer.iss
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "安装程序已生成: installer_output\InsightClass-Setup.exe" -ForegroundColor Green
+        } else {
+            Write-Host "安装程序生成失败" -ForegroundColor Red
+        }
+    }
 } else {
-    Write-Host "便携版输出: $distDir\InsightClass-Web-Portable.exe" -ForegroundColor Cyan
+    Write-Host "提示: 安装 Inno Setup 6 后可生成安装程序 (.exe)" -ForegroundColor Gray
+    Write-Host "下载地址: https://jrsoftware.org/isinfo.php" -ForegroundColor Gray
 }
