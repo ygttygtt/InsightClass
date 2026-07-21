@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
-import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, LlmSettings, SystemStatus, RtspCredentials } from './types'
+import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, FrameOut, LlmSettings, SystemStatus, RtspCredentials } from './types'
 import { addCamera, updateCamera, deleteCamera, detectFrame, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, getSystemStatus, testCameras, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel, getLlmSettings, setLlmSettings, testLlmConnection } from './api/client'
 
 // Health check constants
@@ -9,6 +9,23 @@ const HEALTH_CHECK_INTERVAL = 10000 // 10s
 const MAX_RECONNECT_ATTEMPTS = 5
 const DETECT_INTERVAL = 1000 // 1s
 type CameraConnectionStatus = 'unknown' | 'testing' | 'connected' | 'disconnected'
+
+function detectionsAtFrame(frames: FrameOut[], target: number): DetectionOut[] {
+  let low = 0
+  let high = frames.length - 1
+  let nearest: FrameOut | undefined
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2)
+    const frame = frames[middle]
+    if (frame.frame_index <= target) {
+      nearest = frame
+      low = middle + 1
+    } else {
+      high = middle - 1
+    }
+  }
+  return nearest?.detections || []
+}
 
 function App() {
   // Camera state
@@ -43,6 +60,9 @@ function App() {
 
   // Video detection result
   const [videoFileUrl, setVideoFileUrl] = useState<string | null>(null)
+  const [videoFrames, setVideoFrames] = useState<FrameOut[]>([])
+  const [videoFps, setVideoFps] = useState(0)
+  const [videoFrameIndex, setVideoFrameIndex] = useState(0)
 
   // File list state
   const [fileList, setFileList] = useState<Array<{
@@ -94,6 +114,9 @@ function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const visibleDetections = source === 'video'
+    ? detectionsAtFrame(videoFrames, videoFrameIndex)
+    : detections
 
   // Load cameras
   const loadCameras = useCallback(async () => {
@@ -235,6 +258,9 @@ function App() {
     setFrameCount(0)
     setAnnotatedImage(null)
     setVideoFileUrl(null)
+    setVideoFrames([])
+    setVideoFps(0)
+    setVideoFrameIndex(0)
     setBatchItems([])
   }, [])
 
@@ -322,9 +348,12 @@ function App() {
         setSource('image')
       } else {
         const res = await detectUpload(fd)
-        setDetections(res.frames.flatMap(f => f.detections))
+        setDetections([])
         setLatencyMs(res.total_latency_sec * 1000)
         setFrameCount(res.frame_count)
+        setVideoFrames(res.frames)
+        setVideoFps(res.fps)
+        setVideoFrameIndex(0)
         setVideoFileUrl(URL.createObjectURL(entry.file))
         setSource('video')
       }
@@ -337,6 +366,26 @@ function App() {
       setLoading(false)
     }
   }, [fileList, confidence, iou, model, resetStats])
+
+  useEffect(() => {
+    return () => {
+      if (videoFileUrl) URL.revokeObjectURL(videoFileUrl)
+    }
+  }, [videoFileUrl])
+
+  useEffect(() => {
+    if (source !== 'video' || !videoFileUrl || !videoFps) return
+    const video = videoRef.current
+    if (!video) return
+    const updateFrame = () => setVideoFrameIndex(Math.floor(video.currentTime * videoFps))
+    video.addEventListener('timeupdate', updateFrame)
+    video.addEventListener('seeked', updateFrame)
+    updateFrame()
+    return () => {
+      video.removeEventListener('timeupdate', updateFrame)
+      video.removeEventListener('seeked', updateFrame)
+    }
+  }, [source, videoFileUrl, videoFps])
 
   // ---- Batch detection ----
   const batchPollAbortRef = useRef(false)
@@ -676,7 +725,7 @@ function App() {
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    if (detections.length === 0) return
+    if (visibleDetections.length === 0 || source === 'image') return
 
     // Calculate scale
     const img = imageRef.current
@@ -702,7 +751,7 @@ function App() {
     const PAD = 4
     const LABEL_H = FONT_SIZE + PAD * 2
 
-    for (const d of detections) {
+    for (const d of visibleDetections) {
       const [x1, y1, x2, y2] = d.xyxy
       const rx1 = offsetX + x1 * scale
       const ry1 = offsetY + y1 * scale
@@ -728,7 +777,7 @@ function App() {
       ctx.fillStyle = '#fff'
       ctx.fillText(label, rx1 + PAD, labelTop + FONT_SIZE + PAD)
     }
-  }, [detections, displayNames, viewerRevision])
+  }, [visibleDetections, displayNames, viewerRevision, source])
 
   // Playback video detection overlay sync
   useEffect(() => {
@@ -771,16 +820,17 @@ function App() {
       const fps = playbackResults.fps || 25
       if (frames && frames.length > 0) {
         const curFrame = Math.floor(video.currentTime * fps)
-        const det = frames.find((f: any) => f.frame_index === curFrame)
-        if (det) {
+        const frameDetections = detectionsAtFrame(frames, curFrame)
+        if (frameDetections.length > 0) {
           const vw = video.videoWidth || 640
           const vh = video.videoHeight || 480
-          const sx = canvas.width / vw
-          const sy = canvas.height / vh
-          for (const d of det.detections) {
+          const scale = Math.min(canvas.width / vw, canvas.height / vh)
+          const offsetX = (canvas.width - vw * scale) / 2
+          const offsetY = (canvas.height - vh * scale) / 2
+          for (const d of frameDetections) {
             const [x1, y1, x2, y2] = d.xyxy
-            const rx1 = x1 * sx, ry1 = y1 * sy
-            const rx2 = x2 * sx, ry2 = y2 * sy
+            const rx1 = offsetX + x1 * scale, ry1 = offsetY + y1 * scale
+            const rx2 = offsetX + x2 * scale, ry2 = offsetY + y2 * scale
             const color = COLORS[d.class_name] || '#888'
             ctx.strokeStyle = color
             ctx.lineWidth = 2
@@ -1146,7 +1196,7 @@ function App() {
                   <div key={name} className="stat-chip" data-class={name}>
                     <span className="stat-dot" style={{ background: name === 'phone_use' ? '#ef4444' : name === 'talking' ? '#3b82f6' : name === 'sleeping' ? '#eab308' : '#22c55e' }} />
                     <span className="stat-name">{displayName}</span>
-                    <span className="stat-num">{detections.filter((d) => d.class_name === name).length}</span>
+                    <span className="stat-num">{visibleDetections.filter((d) => d.class_name === name).length}</span>
                   </div>
                 ))}
               </div>
