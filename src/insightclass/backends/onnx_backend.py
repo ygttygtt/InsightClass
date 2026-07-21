@@ -29,6 +29,7 @@ class OnnxBackend(DetectorBackend):
         self._session: Any | None = None
         self._input_name: str | None = None
         self._model_path: str | None = None
+        self._input_size: int | None = None
 
     # ------------------------------------------------------------------
     # Model loading
@@ -44,7 +45,10 @@ class OnnxBackend(DetectorBackend):
             weights_path,
             providers=["CPUExecutionProvider"],
         )
-        self._input_name = self._session.get_inputs()[0].name
+        model_input = self._session.get_inputs()[0]
+        self._input_name = model_input.name
+        input_width = model_input.shape[-1]
+        self._input_size = input_width if isinstance(input_width, int) else None
         self._model_path = weights_path
 
     # ------------------------------------------------------------------
@@ -54,10 +58,11 @@ class OnnxBackend(DetectorBackend):
     @staticmethod
     def _preprocess(
         img: np.ndarray, imgsz: int = 960
-    ) -> tuple[np.ndarray, tuple[float, float]]:
+    ) -> tuple[np.ndarray, float, tuple[int, int], tuple[int, int]]:
         """Resize, pad and normalize image for YOLO input.
 
-        Returns (blob, (ratio, ratio)) where blob shape is (1, 3, imgsz, imgsz).
+        Returns the input blob plus the scale, left/top padding and original
+        image shape needed to restore detections to source coordinates.
         """
         h, w = img.shape[:2]
         r = imgsz / max(h, w)
@@ -80,12 +85,14 @@ class OnnxBackend(DetectorBackend):
 
         # HWC -> CHW, BGR -> RGB, normalize to [0, 1]
         img = img[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
-        return np.expand_dims(img, 0), (r, r)
+        return np.expand_dims(img, 0), r, (left, top), (h, w)
 
     @staticmethod
     def _postprocess(
         output: np.ndarray,
-        ratio: tuple[float, float],
+        scale: float,
+        padding: tuple[int, int],
+        original_shape: tuple[int, int],
         conf_threshold: float,
         iou_threshold: float,
     ) -> list[dict]:
@@ -93,16 +100,20 @@ class OnnxBackend(DetectorBackend):
 
         Args:
             output: Raw ONNX output, shape (1, 4+num_classes, num_boxes).
-            ratio: Preprocessing scale ratio (currently unused; boxes are in
-                model-input coordinates).
+            scale: Scale applied to the original image during preprocessing.
+            padding: Left and top padding applied after resizing.
+            original_shape: Original image height and width.
             conf_threshold: Minimum confidence to keep a detection.
             iou_threshold: IoU threshold for non-maximum suppression.
 
         Returns:
             List of dicts with keys ``xyxy``, ``confidence``, ``class_id``.
         """
-        # (1, 4+nc, N) -> (N, 4+nc)
-        preds = output[0].T
+        preds = output[0]
+        # Ultralytics exports (4+classes, boxes). Accept an already transposed
+        # (boxes, 4+classes) tensor as well.
+        if preds.shape[1] < 5 or preds.shape[0] < preds.shape[1]:
+            preds = preds.T
 
         boxes = preds[:, :4]  # cx, cy, w, h
         scores = preds[:, 4:]  # class scores
@@ -110,7 +121,7 @@ class OnnxBackend(DetectorBackend):
         max_scores = scores.max(axis=1)
         class_ids = scores.argmax(axis=1)
 
-        mask = max_scores > conf_threshold
+        mask = max_scores >= conf_threshold
         boxes = boxes[mask]
         max_scores = max_scores[mask]
         class_ids = class_ids[mask]
@@ -123,19 +134,48 @@ class OnnxBackend(DetectorBackend):
         y1 = boxes[:, 1] - boxes[:, 3] / 2
         x2 = boxes[:, 0] + boxes[:, 2] / 2
         y2 = boxes[:, 1] + boxes[:, 3] / 2
-        xyxy = np.stack([x1, y1, x2, y2], axis=1)
+        xyxy = np.stack([x1, y1, x2, y2], axis=1).astype(np.float32)
 
-        # NMS via OpenCV DNN module
-        indices = cv2.dnn.NMSBoxes(
-            xyxy.tolist(), max_scores.tolist(),
-            conf_threshold, iou_threshold,
-        )
-        if len(indices) == 0:
+        # Undo letterbox padding and scale, then clip to the source image.
+        pad_x, pad_y = padding
+        orig_h, orig_w = original_shape
+        xyxy[:, [0, 2]] = (xyxy[:, [0, 2]] - pad_x) / scale
+        xyxy[:, [1, 3]] = (xyxy[:, [1, 3]] - pad_y) / scale
+        xyxy[:, [0, 2]] = np.clip(xyxy[:, [0, 2]], 0, orig_w)
+        xyxy[:, [1, 3]] = np.clip(xyxy[:, [1, 3]], 0, orig_h)
+
+        widths = xyxy[:, 2] - xyxy[:, 0]
+        heights = xyxy[:, 3] - xyxy[:, 1]
+        valid = (widths > 0) & (heights > 0)
+        xyxy = xyxy[valid]
+        max_scores = max_scores[valid]
+        class_ids = class_ids[valid]
+        if len(xyxy) == 0:
             return []
-        indices = indices.flatten()
+
+        # OpenCV expects x/y/width/height. Run NMS per class so overlapping
+        # detections of different behaviors cannot suppress one another.
+        kept: list[int] = []
+        for class_id in np.unique(class_ids):
+            class_indices = np.flatnonzero(class_ids == class_id)
+            class_boxes = xyxy[class_indices]
+            nms_boxes = np.column_stack((
+                class_boxes[:, 0],
+                class_boxes[:, 1],
+                class_boxes[:, 2] - class_boxes[:, 0],
+                class_boxes[:, 3] - class_boxes[:, 1],
+            ))
+            selected = cv2.dnn.NMSBoxes(
+                nms_boxes.tolist(),
+                max_scores[class_indices].tolist(),
+                conf_threshold,
+                iou_threshold,
+            )
+            if len(selected):
+                kept.extend(class_indices[np.asarray(selected).reshape(-1)].tolist())
 
         results: list[dict] = []
-        for i in indices:
+        for i in sorted(kept, key=lambda idx: float(max_scores[idx]), reverse=True):
             results.append({
                 "xyxy": xyxy[i].tolist(),
                 "confidence": float(max_scores[i]),
@@ -153,16 +193,24 @@ class OnnxBackend(DetectorBackend):
         weights_path: str,
         confidence: float = 0.5,
         iou: float = 0.45,
-        imgsz: int = 960,
+        imgsz: int | None = None,
     ) -> list[dict]:
         """Run inference on a single frame.
 
         Returns a list of dicts with keys ``xyxy``, ``confidence``, ``class_id``.
         """
         self._load_model(weights_path)
-        blob, ratio = self._preprocess(frame, imgsz)
+        input_size = imgsz or self._input_size or 960
+        blob, scale, padding, original_shape = self._preprocess(frame, input_size)
         output = self._session.run(None, {self._input_name: blob})[0]
-        return self._postprocess(output, ratio, confidence, iou)
+        return self._postprocess(
+            output,
+            scale,
+            padding,
+            original_shape,
+            confidence,
+            iou,
+        )
 
     # ------------------------------------------------------------------
     # DetectorBackend ABC stubs (not supported for ONNX)
