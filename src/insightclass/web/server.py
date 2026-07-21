@@ -337,6 +337,8 @@ def _validate_weights_path(path: str) -> str:
     p = Path(path).resolve()
     if not (str(p).endswith(".pt") or str(p).endswith(".onnx")):
         raise ValueError("Only .pt or .onnx weight files are allowed")
+    if not p.is_file():
+        raise FileNotFoundError(f"Model file not found: {p.name}")
     # 允许 experiments/ 目录
     if EXPERIMENTS_ROOT.resolve() in p.parents or p.parent.resolve() == EXPERIMENTS_ROOT.resolve():
         return str(p)
@@ -669,15 +671,37 @@ def _extract_detections(result, display_names: dict[str, str]) -> list[Detection
     return detections
 
 
-# ONNX backend singleton (lazy-init)
-_onnx_backend: OnnxBackend | None = None
+# ONNX sessions are cached per model path. A single mutable backend would race
+# when two cameras select different models concurrently.
+_onnx_backends: dict[str, OnnxBackend] = {}
+_onnx_backends_lock = threading.Lock()
 
 
-def _get_onnx_backend() -> OnnxBackend:
-    global _onnx_backend
-    if _onnx_backend is None:
-        _onnx_backend = OnnxBackend()
-    return _onnx_backend
+def _get_onnx_backend(weights_path: str) -> OnnxBackend:
+    with _onnx_backends_lock:
+        backend = _onnx_backends.get(weights_path)
+        if backend is None:
+            backend = OnnxBackend()
+            _onnx_backends[weights_path] = backend
+        return backend
+
+
+def _resolve_weights_path(model: str = "") -> str:
+    weights_path = model or _find_default_weights() or ""
+    if not weights_path:
+        raise HTTPException(503, "No inference model is available")
+    try:
+        return _validate_weights_path(weights_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _build_inference_backend(weights_path: str):
+    if _is_onnx_model(weights_path):
+        return _get_onnx_backend(weights_path)
+    return build_backend("ultralytics")
 
 
 def _load_class_names() -> dict[int, str]:
@@ -715,13 +739,19 @@ async def lifespan(app: FastAPI):
     default_weights = _find_default_weights()
     if default_weights:
         if _is_onnx_model(default_weights):
-            asyncio.get_event_loop().run_in_executor(None, _get_onnx_backend()._load_model, default_weights)
+            asyncio.get_event_loop().run_in_executor(
+                None,
+                _get_onnx_backend(default_weights)._load_model,
+                default_weights,
+            )
         else:
             asyncio.get_event_loop().run_in_executor(None, preload_model, default_weights)
     ping_task = asyncio.create_task(_ping_cameras_periodically())
     yield
     ping_task.cancel()
     _stream_registry.stop_all()
+    with _onnx_backends_lock:
+        _onnx_backends.clear()
     clear_cache()
 
 
@@ -818,9 +848,7 @@ async def detect_frame(
     h, w = 0, 0
 
     try:
-        weights_path = model if model else (_find_default_weights() or "")
-        if weights_path:
-            weights_path = _validate_weights_path(weights_path)
+        weights_path = _resolve_weights_path(model)
         display_names = _load_class_display_names()
 
         if _is_onnx_model(weights_path):
@@ -828,7 +856,7 @@ async def detect_frame(
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if frame is not None:
                 h, w = frame.shape[:2]
-                onnx = _get_onnx_backend()
+                onnx = _get_onnx_backend(weights_path)
                 results = onnx.predict_frame(frame, weights_path, confidence, iou)
                 class_names = _load_class_names()
                 detections = _onnx_detections_to_detection_outs(results, display_names, class_names)
@@ -866,9 +894,7 @@ async def detect_upload(
 ):
     t0 = time.time()
 
-    weights_path = model if model else (_find_default_weights() or "")
-    if weights_path:
-        weights_path = _validate_weights_path(weights_path)
+    weights_path = _resolve_weights_path(model)
 
     suffix = Path(video.filename).suffix if video.filename else ".mp4"
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -884,7 +910,7 @@ async def detect_upload(
         cap.release()
 
         config = InferenceConfig(
-            backend="ultralytics",
+            backend="onnx" if _is_onnx_model(weights_path) else "ultralytics",
             weights_path=weights_path,
             source=str(tmp_path),
             output_dir=str(Path(tmp_dir) / "output"),
@@ -893,9 +919,12 @@ async def detect_upload(
             device="cpu",
             save_frames=False,
             save_video=False,
+            class_names=list(_load_class_names().values()),
         )
-        backend = build_backend("ultralytics")
-        predictions = backend.load_predictions_as_sv_detections(config)
+        backend = _build_inference_backend(weights_path)
+        predictions = await asyncio.to_thread(
+            backend.load_predictions_as_sv_detections, config
+        )
 
         display_names = _load_class_display_names()
         frames_out: list[FrameOut] = []
@@ -943,16 +972,14 @@ async def detect_image(
     if img is None:
         return JSONResponse({"error": "无法解析图片"}, status_code=400)
 
-    weights_path = model
-    if weights_path:
-        weights_path = _validate_weights_path(weights_path)
+    weights_path = _resolve_weights_path(model)
 
     display_names = _load_class_display_names()
     detections = []
 
     if _is_onnx_model(weights_path):
         try:
-            onnx = _get_onnx_backend()
+            onnx = _get_onnx_backend(weights_path)
             results = onnx.predict_frame(img, weights_path, confidence, iou)
             class_names = _load_class_names()
 
@@ -1080,9 +1107,7 @@ async def batch_detect(
     if not job:
         return JSONResponse({"error": "Batch not found"}, status_code=404)
 
-    weights_path = model if model else (_find_default_weights() or "")
-    if weights_path:
-        weights_path = _validate_weights_path(weights_path)
+    weights_path = _resolve_weights_path(model)
 
     job["status"] = "processing"
     job["_weights_path"] = weights_path
@@ -1116,7 +1141,7 @@ def _batch_detect_worker(job: dict):
 
     t0 = time.time()
     display_names = _load_class_display_names()
-    backend = build_backend("ultralytics")
+    backend = _build_inference_backend(weights_path)
 
     for i, item in enumerate(job["items"]):
         item["status"] = "processing"
@@ -1132,7 +1157,7 @@ def _batch_detect_worker(job: dict):
 
             t1 = time.time()
             config = InferenceConfig(
-                backend="ultralytics",
+                backend="onnx" if _is_onnx_model(weights_path) else "ultralytics",
                 weights_path=weights_path,
                 source=video_path,
                 output_dir=os.path.join(job["_dir"], "output"),
@@ -1141,6 +1166,7 @@ def _batch_detect_worker(job: dict):
                 device="cpu",
                 save_frames=False,
                 save_video=False,
+                class_names=list(_load_class_names().values()),
             )
             predictions = backend.load_predictions_as_sv_detections(config)
 
@@ -1502,13 +1528,11 @@ async def detect_rtsp(
     h, w = frame.shape[:2]
     detections = []
     try:
-        weights_path = model if model else (_find_default_weights() or "")
-        if weights_path:
-            weights_path = _validate_weights_path(weights_path)
+        weights_path = _resolve_weights_path(model)
         display_names = _load_class_display_names()
 
         if _is_onnx_model(weights_path):
-            onnx = _get_onnx_backend()
+            onnx = _get_onnx_backend(weights_path)
             results = onnx.predict_frame(frame, weights_path, confidence, iou)
             class_names = _load_class_names()
             detections = _onnx_detections_to_detection_outs(results, display_names, class_names)

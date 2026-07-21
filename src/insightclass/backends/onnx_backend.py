@@ -200,7 +200,7 @@ class OnnxBackend(DetectorBackend):
         Returns a list of dicts with keys ``xyxy``, ``confidence``, ``class_id``.
         """
         self._load_model(weights_path)
-        input_size = imgsz or self._input_size or 960
+        input_size = self._input_size or imgsz or 960
         blob, scale, padding, original_shape = self._preprocess(frame, input_size)
         output = self._session.run(None, {self._input_name: blob})[0]
         return self._postprocess(
@@ -236,9 +236,48 @@ class OnnxBackend(DetectorBackend):
     def load_predictions_as_sv_detections(
         self, config: InferenceConfig
     ) -> list[FramePrediction]:
-        raise NotImplementedError(
-            "ONNX backend only supports single-frame inference via predict_frame()."
-        )
+        capture = cv2.VideoCapture(config.source)
+        if not capture.isOpened():
+            capture.release()
+            raise ValueError(f"Unable to open video: {config.source}")
+
+        predictions: list[FramePrediction] = []
+        frame_index = 0
+        try:
+            while True:
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    break
+                raw_detections = self.predict_frame(
+                    frame,
+                    config.weights_path,
+                    config.confidence,
+                    config.iou,
+                    config.image_size,
+                )
+                detections = []
+                for item in raw_detections:
+                    class_id = item["class_id"]
+                    class_name = (
+                        config.class_names[class_id]
+                        if 0 <= class_id < len(config.class_names)
+                        else str(class_id)
+                    )
+                    detections.append(DetectionRecord(
+                        xyxy=item["xyxy"],
+                        confidence=item["confidence"],
+                        class_id=class_id,
+                        class_name=class_name,
+                    ))
+                predictions.append(FramePrediction(
+                    frame_index=frame_index,
+                    source_path=config.source,
+                    detections=detections,
+                ))
+                frame_index += 1
+        finally:
+            capture.release()
+        return predictions
 
     def export_artifacts(self, experiment_dir: str) -> dict[str, str]:
         raise NotImplementedError(

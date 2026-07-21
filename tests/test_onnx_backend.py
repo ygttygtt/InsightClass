@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from insightclass.backends.onnx_backend import OnnxBackend
+from insightclass.schemas import InferenceConfig
 
 
 class OnnxBackendPostprocessTests(unittest.TestCase):
@@ -43,6 +45,46 @@ class OnnxBackendPostprocessTests(unittest.TestCase):
         )
 
         self.assertEqual({item["class_id"] for item in detections}, {0, 1})
+
+    def test_video_inference_preserves_frame_indices_and_class_names(self):
+        frames = [
+            np.zeros((10, 20, 3), dtype=np.uint8),
+            np.ones((10, 20, 3), dtype=np.uint8),
+        ]
+
+        class FakeCapture:
+            def __init__(self, _source):
+                self._frames = iter(frames)
+                self.released = False
+
+            def isOpened(self):
+                return True
+
+            def read(self):
+                try:
+                    return True, next(self._frames)
+                except StopIteration:
+                    return False, None
+
+            def release(self):
+                self.released = True
+
+        config = InferenceConfig(
+            backend="onnx",
+            weights_path="model.onnx",
+            source="video.mp4",
+            output_dir="output",
+            image_size=20,
+            class_names=["phone_use"],
+        )
+        backend = OnnxBackend()
+        detection = {"xyxy": [1, 2, 3, 4], "confidence": 0.9, "class_id": 0}
+        with patch("insightclass.backends.onnx_backend.cv2.VideoCapture", FakeCapture):
+            with patch.object(backend, "predict_frame", return_value=[detection]):
+                predictions = backend.load_predictions_as_sv_detections(config)
+
+        self.assertEqual([item.frame_index for item in predictions], [0, 1])
+        self.assertEqual(predictions[0].detections[0].class_name, "phone_use")
 
 
 if __name__ == "__main__":
