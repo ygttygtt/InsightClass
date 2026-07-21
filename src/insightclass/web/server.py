@@ -42,10 +42,7 @@ from insightclass.web.llm import (
 )
 from insightclass.web.model_cache import clear_cache, get_model, preload_model
 from insightclass.web.schemas import (
-    BatchDetectionResult,
-    BatchJob,
     DetectionOut,
-    ExperimentSummary,
     FrameDetectionResponse,
     FrameOut,
     VideoDetectionResponse,
@@ -746,50 +743,6 @@ def _get_font(size: int = 18) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def _draw_detections_pil(image: np.ndarray, results, display_names: dict[str, str]) -> np.ndarray:
-    """Draw bounding boxes and labels on image using PIL (supports Chinese)."""
-    if results is None or len(results) == 0:
-        return image
-    result = results[0]
-    if result.boxes is None or len(result.boxes) == 0:
-        return image
-
-    boxes = result.boxes.xyxy.cpu().numpy()
-    confs = result.boxes.conf.cpu().numpy()
-    cls_ids = result.boxes.cls.cpu().numpy().astype(int)
-    names = result.names if result.names else {}
-
-    colors = [
-        (56, 189, 248),
-        (244, 114, 182),
-        (52, 211, 153),
-        (251, 191, 36),
-        (167, 139, 250),
-    ]
-
-    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(img_rgb)
-    draw = ImageDraw.Draw(pil_img)
-    font = _get_font(18)
-
-    for i in range(len(boxes)):
-        cls_id = cls_ids[i]
-        conf = confs[i]
-        x1, y1, x2, y2 = boxes[i].astype(int)
-        color = colors[cls_id % len(colors)]
-        class_name = names.get(cls_id, str(cls_id))
-        display = display_names.get(class_name, class_name)
-        label = f"{display} {conf:.2f}"
-
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
-        bbox = draw.textbbox((0, 0), label, font=font)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        draw.rectangle([x1, y1 - th - 8, x1 + tw + 8, y1], fill=color)
-        draw.text((x1 + 4, y1 - th - 4), label, fill=(0, 0, 0), font=font)
-
-    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-
-
 def _extract_detections(result, display_names: dict[str, str]) -> list[DetectionOut]:
     detections: list[DetectionOut] = []
     if result.boxes is None:
@@ -1028,9 +981,17 @@ async def system_status():
     return JSONResponse({"service": "ready", "model": _get_model_state()})
 
 
+def _experiment_artifact_path(exp_id: str, filename: str) -> Path:
+    root = EXPERIMENTS_ROOT.resolve()
+    candidate = (root / exp_id / filename).resolve()
+    if root not in candidate.parents:
+        raise HTTPException(400, "Invalid experiment id")
+    return candidate
+
+
 @app.get("/api/experiments/{exp_id}/results.csv")
 async def get_results_csv(exp_id: str):
-    csv_path = EXPERIMENTS_ROOT / exp_id / "results.csv"
+    csv_path = _experiment_artifact_path(exp_id, "results.csv")
     if not csv_path.exists():
         raise HTTPException(404, "results.csv not found")
     text = csv_path.read_text(encoding="utf-8")
@@ -1041,7 +1002,7 @@ async def get_results_csv(exp_id: str):
 
 @app.get("/api/experiments/{exp_id}/confusion_matrix")
 async def get_confusion_matrix(exp_id: str):
-    img_path = EXPERIMENTS_ROOT / exp_id / "confusion_matrix.png"
+    img_path = _experiment_artifact_path(exp_id, "confusion_matrix.png")
     if not img_path.exists():
         raise HTTPException(404, "confusion_matrix.png not found")
     return FileResponse(img_path, media_type="image/png")
@@ -1049,7 +1010,7 @@ async def get_confusion_matrix(exp_id: str):
 
 @app.get("/api/experiments/{exp_id}/results.png")
 async def get_results_png(exp_id: str):
-    img_path = EXPERIMENTS_ROOT / exp_id / "results.png"
+    img_path = _experiment_artifact_path(exp_id, "results.png")
     if not img_path.exists():
         raise HTTPException(404, "results.png not found")
     return FileResponse(img_path, media_type="image/png")
@@ -1850,15 +1811,6 @@ async def detect_rtsp(
     )
 
 
-def _extract_ip_from_rtsp(url: str) -> str:
-    """Extract IP address from rtsp://user:pass@IP:port/... URL."""
-    try:
-        after_at = url.split("@", 1)[1] if "@" in url else url.split("//", 1)[1]
-        return after_at.split(":")[0].split("/")[0]
-    except Exception:
-        return "unknown"
-
-
 @app.get("/api/dashboard/stats")
 async def dashboard_stats():
     raw = _dashboard_stats.get_all()
@@ -2164,7 +2116,13 @@ async def serve_spa(path: str):
     """Serve built React frontend — static files take priority, everything else falls back to index.html."""
     if not _FRONTEND_DIST.exists():
         raise HTTPException(404, "Frontend not built")
-    file_path = _FRONTEND_DIST / path
+    frontend_root = _FRONTEND_DIST.resolve()
+    file_path = (frontend_root / path).resolve()
+    if frontend_root not in file_path.parents and file_path != frontend_root:
+        raise HTTPException(404, "Frontend file not found")
     if file_path.is_file():
         return FileResponse(file_path)
-    return FileResponse(_FRONTEND_DIST / "index.html")
+    index_path = frontend_root / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(404, "Frontend not built")
+    return FileResponse(index_path)

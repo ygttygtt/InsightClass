@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 
 from insightclass.web._server_utils import fix_windows_event_loop
-fix_windows_event_loop()
-
 from insightclass.backends.factory import build_backend
 from insightclass.data.manifest import create_manifest, load_manifest, save_manifest
 from insightclass.data.video_ops import extract_frames_from_manifest
@@ -16,6 +14,8 @@ from insightclass.schemas import InferenceConfig, TrainingConfig
 from insightclass.utils.paths import ensure_dir
 from insightclass.utils.serialization import load_yaml
 from insightclass.utils.pipeline import VisualizationPipeline
+
+fix_windows_event_loop()
 
 
 def _load_training_config(path: str) -> TrainingConfig:

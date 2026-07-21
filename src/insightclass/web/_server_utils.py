@@ -6,7 +6,10 @@ import sys
 import threading
 import time
 import urllib.request
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import uvicorn
 
 
 def fix_windows_event_loop() -> None:
@@ -19,7 +22,7 @@ def start_server_thread(
     host: str = "127.0.0.1",
     port: int = 8000,
     log_level: str = "warning",
-) -> Tuple[threading.Thread, "uvicorn.Server"]:
+) -> tuple[threading.Thread, "uvicorn.Server"]:
     """Start uvicorn in a daemon thread. Returns (thread, server) for control."""
     import uvicorn
     from insightclass.web.server import app
