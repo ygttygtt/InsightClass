@@ -2,12 +2,13 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
 import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, LlmSettings, SystemStatus } from './types'
-import { addCamera, updateCamera, deleteCamera, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, getSystemStatus, testCamera, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel, getLlmSettings, setLlmSettings, testLlmConnection } from './api/client'
+import { addCamera, updateCamera, deleteCamera, detectFrame, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, getSystemStatus, testCameras, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel, getLlmSettings, setLlmSettings, testLlmConnection } from './api/client'
 
 // Health check constants
 const HEALTH_CHECK_INTERVAL = 10000 // 10s
 const MAX_RECONNECT_ATTEMPTS = 5
 const DETECT_INTERVAL = 1000 // 1s
+type CameraConnectionStatus = 'unknown' | 'testing' | 'connected' | 'disconnected'
 
 function App() {
   // Camera state
@@ -16,6 +17,7 @@ function App() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingCamera, setEditingCamera] = useState<Camera | null>(null)
   const [testingCameras, setTestingCameras] = useState(false)
+  const [cameraStatuses, setCameraStatuses] = useState<Record<string, CameraConnectionStatus>>({})
 
   // Camera & stream state
   const [rtspStreamUrl, setRtspStreamUrl] = useState<string | null>(null)
@@ -30,6 +32,8 @@ function App() {
   const [annotatedImage, setAnnotatedImage] = useState<string | null>(null)
   const [displayNames, setDisplayNames] = useState<DisplayNames>({})
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
+  const [sourceError, setSourceError] = useState('')
+  const [viewerRevision, setViewerRevision] = useState(0)
 
   // Model controls
   const [model, setModel] = useState('')
@@ -85,7 +89,10 @@ function App() {
   const detectTimerRef = useRef<number | null>(null)
   const healthTimerRef = useRef<number | null>(null)
   const detectionInFlightRef = useRef(false)
+  const detectionGenerationRef = useRef(0)
+  const webcamStreamRef = useRef<MediaStream | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const imageRef = useRef<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
   // Load cameras
@@ -165,29 +172,44 @@ function App() {
   const handleTestCameras = useCallback(async () => {
     if (testingCameras) return
     setTestingCameras(true)
+    const ips = cameras.map((camera) => camera.ip)
+    setCameraStatuses((prev) => ({
+      ...prev,
+      ...Object.fromEntries(ips.map((ip) => [ip, 'testing' as const])),
+    }))
 
-    const items = document.querySelectorAll('.camera-item')
-    items.forEach(el => {
-      const dot = el.querySelector('.cam-status')
-      if (dot) dot.className = 'cam-status testing'
-    })
-
-    for (const camera of cameras) {
-      const dot = document.querySelector(`.camera-item[data-ip="${camera.ip}"] .cam-status`)
-      if (!dot) continue
-      try {
-        const result = await testCamera(camera.ip)
-        dot.className = `cam-status ${result.status === 'connected' ? 'connected' : 'disconnected'}`
-      } catch {
-        dot.className = 'cam-status disconnected'
-      }
+    try {
+      const results = await testCameras(ips)
+      setCameraStatuses((prev) => ({
+        ...prev,
+        ...Object.fromEntries(ips.map((ip) => [
+          ip,
+          results[ip] === 'connected' ? 'connected' as const : 'disconnected' as const,
+        ])),
+      }))
+    } catch {
+      setCameraStatuses((prev) => ({
+        ...prev,
+        ...Object.fromEntries(ips.map((ip) => [ip, 'disconnected' as const])),
+      }))
+    } finally {
+      setTestingCameras(false)
     }
-
-    setTestingCameras(false)
   }, [cameras, testingCameras])
+
+  const stopWebcam = useCallback(() => {
+    webcamStreamRef.current?.getTracks().forEach((track) => track.stop())
+    webcamStreamRef.current = null
+    const video = videoRef.current
+    if (video?.srcObject) {
+      video.pause()
+      video.srcObject = null
+    }
+  }, [])
 
   // ---- Stop all detection ----
   const stopAll = useCallback(() => {
+    detectionGenerationRef.current += 1
     if (detectTimerRef.current !== null) {
       clearInterval(detectTimerRef.current)
       detectTimerRef.current = null
@@ -202,7 +224,9 @@ function App() {
     setFrameCount(0)
     setStreamHealthy(null)
     setReconnectAttempts(0)
-  }, [])
+    setSourceError('')
+    stopWebcam()
+  }, [stopWebcam])
 
   // ---- Reset stats ----
   const resetStats = useCallback(() => {
@@ -447,6 +471,10 @@ function App() {
         const status = await getStreamStatus(cameraIp)
         const isOk = status.active === true
         setStreamHealthy(isOk)
+        setCameraStatuses((prev) => ({
+          ...prev,
+          [cameraIp]: isOk ? 'connected' : status.status === 'connecting' ? 'testing' : 'disconnected',
+        }))
 
         if (status.status === 'error' || status.status === 'idle') {
           setReconnectAttempts((prev) => {
@@ -462,6 +490,7 @@ function App() {
         }
       } catch {
         setStreamHealthy(false)
+        setCameraStatuses((prev) => ({ ...prev, [cameraIp]: 'disconnected' }))
       }
     }
 
@@ -499,27 +528,31 @@ function App() {
   }, [selectedCamera, resetStats, startHealthCheck, stopAll])
 
   // ---- Start detection ----
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback(async () => {
     if (source === 'rtsp') {
       if (!selectedCamera) return
       stopAll()
       resetStats()
       setRunning(true)
+      const generation = detectionGenerationRef.current
 
       const doDetect = async () => {
-        if (detectionInFlightRef.current) return
+        if (detectionInFlightRef.current || detectionGenerationRef.current !== generation) return
         detectionInFlightRef.current = true
         const fd = new FormData()
         fd.append('camera_ip', selectedCamera.ip)
         try {
           const res = await detectRtsp(fd)
-          if (res.frame_width > 0 && res.frame_height > 0) {
+          if (detectionGenerationRef.current === generation && res.frame_width > 0 && res.frame_height > 0) {
             setDetections(res.detections)
             setLatencyMs(res.latency_ms)
             setFrameCount((c) => c + 1)
+            setSourceError('')
           }
-        } catch {
-          // skip failed frames
+        } catch (err) {
+          if (detectionGenerationRef.current === generation) {
+            setSourceError(err instanceof Error ? err.message : '摄像头检测失败')
+          }
         } finally {
           detectionInFlightRef.current = false
         }
@@ -528,6 +561,67 @@ function App() {
       void doDetect()
       detectTimerRef.current = window.setInterval(doDetect, DETECT_INTERVAL)
       startHealthCheck(selectedCamera.ip)
+    } else if (source === 'webcam') {
+      stopAll()
+      resetStats()
+      setLoading(true)
+      const generation = detectionGenerationRef.current
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('当前 WebView 不支持摄像头访问')
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        if (detectionGenerationRef.current !== generation) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
+        const video = videoRef.current
+        if (!video) throw new Error('摄像头预览未就绪')
+        webcamStreamRef.current = stream
+        video.srcObject = stream
+        await video.play()
+        setRunning(true)
+
+        const capture = document.createElement('canvas')
+        const doDetect = async () => {
+          if (detectionInFlightRef.current || detectionGenerationRef.current !== generation) return
+          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return
+          detectionInFlightRef.current = true
+          try {
+            capture.width = video.videoWidth
+            capture.height = video.videoHeight
+            capture.getContext('2d')?.drawImage(video, 0, 0)
+            const blob = await new Promise<Blob | null>((resolve) => capture.toBlob(resolve, 'image/jpeg', 0.85))
+            if (!blob) throw new Error('无法读取摄像头画面')
+            const fd = new FormData()
+            fd.append('image', blob, 'webcam.jpg')
+            fd.append('confidence', String(confidence))
+            fd.append('iou', String(iou))
+            if (model) fd.append('model', model)
+            const res = await detectFrame(fd)
+            if (detectionGenerationRef.current === generation) {
+              setDetections(res.detections)
+              setLatencyMs(res.latency_ms)
+              setFrameCount((count) => count + 1)
+              setSourceError('')
+            }
+          } catch (err) {
+            if (detectionGenerationRef.current === generation) {
+              setSourceError(err instanceof Error ? err.message : '电脑摄像头检测失败')
+            }
+          } finally {
+            detectionInFlightRef.current = false
+          }
+        }
+        void doDetect()
+        detectTimerRef.current = window.setInterval(doDetect, DETECT_INTERVAL)
+      } catch (err) {
+        stopWebcam()
+        setRunning(false)
+        setSourceError(err instanceof Error ? err.message : '无法连接电脑摄像头')
+      } finally {
+        setLoading(false)
+      }
     } else if (source === 'image') {
       document.querySelector<HTMLInputElement>('#image-input')?.click()
     } else if (source === 'video') {
@@ -535,20 +629,34 @@ function App() {
     } else if (source === 'batch') {
       batchDetect()
     }
-  }, [source, selectedCamera, stopAll, resetStats, startHealthCheck, batchDetect])
+  }, [source, selectedCamera, stopAll, resetStats, startHealthCheck, batchDetect, confidence, iou, model, stopWebcam])
 
   // ---- Stop detection ----
   const handleStop = useCallback(() => {
     stopAll()
-  }, [stopAll])
+    if (source === 'rtsp' && selectedCamera) {
+      void stopStream(selectedCamera.ip).catch(() => {})
+    }
+  }, [source, selectedCamera, stopAll])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       batchPollAbortRef.current = true
+      detectionGenerationRef.current += 1
       if (detectTimerRef.current !== null) clearInterval(detectTimerRef.current)
       if (healthTimerRef.current !== null) clearInterval(healthTimerRef.current)
+      stopWebcam()
     }
+  }, [stopWebcam])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const parent = canvas?.parentElement
+    if (!parent) return
+    const observer = new ResizeObserver(() => setViewerRevision((revision) => revision + 1))
+    observer.observe(parent)
+    return () => observer.disconnect()
   }, [])
 
   // Draw detections on canvas
@@ -571,15 +679,14 @@ function App() {
     if (detections.length === 0) return
 
     // Calculate scale
-    const img = document.getElementById('source-image') as HTMLImageElement
-    const video = document.getElementById('source-video') as HTMLVideoElement
-    const source = img || video
-    if (!source) return
-
-    const sourceWidth = img?.naturalWidth || video?.videoWidth || 640
-    const sourceHeight = img?.naturalHeight || video?.videoHeight || 480
-    const scaleX = canvas.width / sourceWidth
-    const scaleY = canvas.height / sourceHeight
+    const img = imageRef.current
+    const video = videoRef.current
+    const sourceWidth = img?.naturalWidth || video?.videoWidth || 0
+    const sourceHeight = img?.naturalHeight || video?.videoHeight || 0
+    if (!sourceWidth || !sourceHeight) return
+    const scale = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight)
+    const offsetX = (canvas.width - sourceWidth * scale) / 2
+    const offsetY = (canvas.height - sourceHeight * scale) / 2
 
     // Draw detections
     const COLORS: Record<string, string> = {
@@ -597,10 +704,10 @@ function App() {
 
     for (const d of detections) {
       const [x1, y1, x2, y2] = d.xyxy
-      const rx1 = x1 * scaleX
-      const ry1 = y1 * scaleY
-      const rx2 = x2 * scaleX
-      const ry2 = y2 * scaleY
+      const rx1 = offsetX + x1 * scale
+      const ry1 = offsetY + y1 * scale
+      const rx2 = offsetX + x2 * scale
+      const ry2 = offsetY + y2 * scale
       const w = rx2 - rx1
       const h = ry2 - ry1
       const color = COLORS[d.class_name] || '#888'
@@ -615,12 +722,13 @@ function App() {
       const tm = ctx.measureText(label)
       ctx.fillStyle = color
       ctx.beginPath()
-      ctx.roundRect(rx1, ry1 - LABEL_H - PAD, tm.width + PAD * 2, LABEL_H + PAD, 3)
+      const labelTop = Math.max(offsetY, ry1 - LABEL_H)
+      ctx.roundRect(rx1, labelTop, tm.width + PAD * 2, LABEL_H, 3)
       ctx.fill()
       ctx.fillStyle = '#fff'
-      ctx.fillText(label, rx1 + PAD, ry1 - PAD - 1)
+      ctx.fillText(label, rx1 + PAD, labelTop + FONT_SIZE + PAD)
     }
-  }, [detections, displayNames])
+  }, [detections, displayNames, viewerRevision])
 
   // Playback video detection overlay sync
   useEffect(() => {
@@ -792,7 +900,7 @@ function App() {
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(e, 'image')}
               >
-                <input type="file" accept="image/*" multiple onChange={(e) => {
+                <input id="image-input" type="file" accept="image/*" multiple onChange={(e) => {
                   if (e.target.files) addFilesToList(e.target.files)
                   e.target.value = ''
                 }} />
@@ -810,7 +918,7 @@ function App() {
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(e, 'video')}
               >
-                <input type="file" accept="video/*" multiple onChange={(e) => {
+                <input id="video-input" type="file" accept="video/*" multiple onChange={(e) => {
                   if (e.target.files) addFilesToList(e.target.files)
                   e.target.value = ''
                 }} />
@@ -926,7 +1034,7 @@ function App() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
                 大屏
               </button>
-              <button className="btn-ctrl btn-start" onClick={handleStart} disabled={(source === 'rtsp' && !selectedCamera) || (source === 'batch' && (batchFiles.length === 0 || batchProcessing))}>
+              <button className="btn-ctrl btn-start" onClick={handleStart} disabled={running || (source === 'rtsp' && !selectedCamera) || (source === 'batch' && (batchFiles.length === 0 || batchProcessing))}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
                 开始
               </button>
@@ -951,17 +1059,22 @@ function App() {
                   模型加载失败: {systemStatus.model.error || '请检查模型配置'}
                 </div>
               )}
+              {sourceError && (
+                <div className="model-status-banner model-status-error source-error-banner" role="alert" title={sourceError}>
+                  {sourceError}
+                </div>
+              )}
               {source === 'rtsp' && rtspStreamUrl && (
-                <img id="source-image" src={rtspStreamUrl} alt="RTSP stream" />
+                <img id="source-image" ref={imageRef} src={rtspStreamUrl} alt="RTSP stream" onLoad={() => setViewerRevision((revision) => revision + 1)} />
               )}
               {source === 'webcam' && (
-                <video id="source-video" ref={videoRef} autoPlay playsInline muted />
+                <video id="source-video" ref={videoRef} autoPlay playsInline muted onLoadedMetadata={() => setViewerRevision((revision) => revision + 1)} />
               )}
               {source === 'image' && annotatedImage && (
-                <img id="source-image" src={annotatedImage} alt="Detection result" />
+                <img id="source-image" ref={imageRef} src={annotatedImage} alt="Detection result" onLoad={() => setViewerRevision((revision) => revision + 1)} />
               )}
               {source === 'video' && videoFileUrl && (
-                <video id="source-video" src={videoFileUrl} controls playsInline />
+                <video id="source-video" ref={videoRef} src={videoFileUrl} controls playsInline onLoadedMetadata={() => setViewerRevision((revision) => revision + 1)} />
               )}
               {source === 'batch' && batchItems.length > 0 && (
                 <div className="batch-results">
@@ -1009,7 +1122,7 @@ function App() {
               )}
               <canvas id="overlay-canvas" ref={canvasRef} />
 
-              {((source === 'rtsp' && !rtspStreamUrl) || (source === 'webcam' && !loading) || (source === 'image' && !annotatedImage) || (source === 'video' && !videoFileUrl)) && (
+              {((source === 'rtsp' && !rtspStreamUrl) || (source === 'webcam' && !running && !loading) || (source === 'image' && !annotatedImage) || (source === 'video' && !videoFileUrl)) && (
                 <div id="placeholder" className="placeholder">
                   <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" opacity=".3">
                     <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
@@ -1100,7 +1213,7 @@ function App() {
                             <span className="cam-ip-only">{camera.ip}</span>
                           )}
                         </div>
-                        <span className={`cam-status ${(camera as any)._status === 'online' ? 'connected' : (camera as any)._status === 'offline' ? 'disconnected' : 'unknown'}`} />
+                        <span className={`cam-status ${cameraStatuses[camera.ip] || 'unknown'}`} />
                         <button className="cam-edit" title="编辑" onClick={(e) => { e.stopPropagation(); setEditingCamera(camera); setModalOpen(true) }}>
                           &#9998;
                         </button>

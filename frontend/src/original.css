@@ -694,6 +694,9 @@ body {
   color: #fecaca;
   border-color: rgba(239, 68, 68, .65);
 }
+.source-error-banner {
+  top: 56px;
+}
 .model-status-spinner {
   width: 14px;
   height: 14px;
