@@ -113,5 +113,37 @@ class ModelLifecycleTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 400)
 
 
+class DashboardStatsTests(unittest.TestCase):
+    def test_history_uses_real_hourly_counts(self):
+        stats = server.DashboardStats()
+        with patch("insightclass.web.server.time.time", return_value=1_750_000_000):
+            stats.record("192.168.1.10", "phone_use")
+            history = stats.get_history(["192.168.1.10"])
+
+        self.assertEqual(len(history["192.168.1.10"]), 24)
+        self.assertEqual(history["192.168.1.10"][-1]["phone_use"], 1)
+        self.assertEqual(history["192.168.1.10"][-1]["talking"], 0)
+
+    def test_dashboard_total_only_includes_configured_cameras(self):
+        stats = server.DashboardStats()
+        stats.record("192.168.1.10", "phone_use")
+        stats.record("upload", "talking")
+        cameras = [{
+            "ip": "192.168.1.10",
+            "name": "Front",
+            "group": "front",
+            "group_label": "Front",
+            "_status": "unknown",
+        }]
+        with patch.object(server, "_dashboard_stats", stats):
+            with patch.object(server, "_build_camera_list", return_value=cameras):
+                response = asyncio.run(server.dashboard_stats())
+
+        body = bytes(response.body)
+        self.assertIn(b'"phone_use":1', body)
+        self.assertIn(b'"talking":0', body)
+        self.assertIn(b'"status":"unknown"', body)
+
+
 if __name__ == "__main__":
     unittest.main()

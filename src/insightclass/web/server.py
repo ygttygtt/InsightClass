@@ -8,7 +8,6 @@ import io
 import json
 import logging
 import os
-import random
 import re
 import shutil
 import socket
@@ -18,6 +17,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
@@ -294,6 +294,7 @@ class DashboardStats:
     def __init__(self):
         self._lock = threading.Lock()
         self._cameras: dict[str, dict] = {}  # ip -> {stats, last_update}
+        self._history: dict[str, dict[int, dict[str, int]]] = defaultdict(dict)
 
     def record(self, ip: str, class_name: str):
         with self._lock:
@@ -306,6 +307,21 @@ class DashboardStats:
             if class_name in cam["stats"]:
                 cam["stats"][class_name] += 1
             cam["last_update"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            bucket = int(time.time() // 3600 * 3600)
+            hourly = self._history[ip].setdefault(bucket, {
+                "phone_use": 0,
+                "talking": 0,
+                "sleeping": 0,
+                "standing": 0,
+            })
+            if class_name in hourly:
+                hourly[class_name] += 1
+            cutoff = bucket - 23 * 3600
+            self._history[ip] = {
+                key: value
+                for key, value in self._history[ip].items()
+                if key >= cutoff
+            }
 
     def get_all(self) -> dict:
         with self._lock:
@@ -324,6 +340,31 @@ class DashboardStats:
     def reset(self):
         with self._lock:
             self._cameras.clear()
+            self._history.clear()
+
+    def remove(self, ip: str) -> None:
+        with self._lock:
+            self._cameras.pop(ip, None)
+            self._history.pop(ip, None)
+
+    def get_history(self, ips: list[str]) -> dict[str, list[dict]]:
+        with self._lock:
+            now_bucket = int(time.time() // 3600 * 3600)
+            buckets = [now_bucket - index * 3600 for index in range(23, -1, -1)]
+            result: dict[str, list[dict]] = {}
+            for ip in ips:
+                by_hour = self._history.get(ip, {})
+                result[ip] = []
+                for bucket in buckets:
+                    values = by_hour.get(bucket, {})
+                    result[ip].append({
+                        "time": time.strftime("%Y-%m-%dT%H:00:00", time.localtime(bucket)),
+                        "phone_use": values.get("phone_use", 0),
+                        "talking": values.get("talking", 0),
+                        "sleeping": values.get("sleeping", 0),
+                        "standing": values.get("standing", 0),
+                    })
+            return result
 
 
 _dashboard_stats = DashboardStats()
@@ -419,31 +460,44 @@ def _save_custom_cameras(cameras: list[dict]):
 
 
 _camera_ping_results: dict[str, dict] = {}
+_camera_ping_lock = threading.Lock()
+
+
+def _probe_camera_port(ip: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(2)
+            return sock.connect_ex((ip, port)) == 0
+    except OSError:
+        return False
+
+
+async def _ping_cameras_once() -> None:
+    cameras = _load_custom_cameras()
+    port = int(_get_rtsp_credentials().get("port", DEFAULT_RTSP_PORT))
+    probes = []
+    for cam in cameras:
+        try:
+            ip = _validate_camera_ip(str(cam.get("ip", "")))
+        except ValueError:
+            continue
+        probes.append((ip, asyncio.to_thread(_probe_camera_port, ip, port)))
+    if not probes:
+        return
+    results = await asyncio.gather(*(probe for _, probe in probes))
+    checked_at = datetime.now().isoformat()
+    with _camera_ping_lock:
+        for (ip, _), reachable in zip(probes, results, strict=False):
+            _camera_ping_results[ip] = {
+                "reachable": reachable,
+                "last_check": checked_at,
+            }
 
 
 async def _ping_cameras_periodically():
     """Background task to check camera reachability every 30 seconds."""
     while True:
-        cameras = _load_custom_cameras()
-        port = int(_get_rtsp_credentials().get("port", DEFAULT_RTSP_PORT))
-        for cam in cameras:
-            ip = cam.get("ip", "")
-            if not ip:
-                continue
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(2)
-                result = sock.connect_ex((ip, port))
-                sock.close()
-                _camera_ping_results[ip] = {
-                    "reachable": result == 0,
-                    "last_check": datetime.now().isoformat(),
-                }
-            except Exception:
-                _camera_ping_results[ip] = {
-                    "reachable": False,
-                    "last_check": datetime.now().isoformat(),
-                }
+        await _ping_cameras_once()
         await asyncio.sleep(30)
 
 
@@ -1349,6 +1403,8 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
     """构建摄像头列表（从 cameras.yaml 读取）。"""
     custom_cameras = _load_custom_cameras()
     creds = _get_rtsp_credentials()
+    with _camera_ping_lock:
+        ping_results = dict(_camera_ping_results)
 
     cameras = []
     for cam in custom_cameras:
@@ -1368,7 +1424,10 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
             "custom": True,
             "_status": (
                 "connected" if _stream_registry.is_active(ip)
-                else ("online" if _camera_ping_results.get(ip, {}).get("reachable") else "offline")
+                else (
+                    "unknown" if ip not in ping_results
+                    else ("online" if ping_results[ip].get("reachable") else "offline")
+                )
             ),
         }
         if include_credentials:
@@ -1437,6 +1496,7 @@ async def delete_camera(ip: str):
     cameras = [c for c in cameras if c.get("ip") != normalized_ip]
     _save_custom_cameras(cameras)
     _stream_registry.stop(normalized_ip)
+    _dashboard_stats.remove(normalized_ip)
     return JSONResponse({"ok": True}, media_type="application/json; charset=utf-8")
 
 
@@ -1591,21 +1651,26 @@ async def dashboard_stats():
     # Build a lookup from raw stats by IP
     stats_by_ip = {c["ip"]: c for c in raw["cameras"]}
     result_cameras = []
+    total = {"phone_use": 0, "talking": 0, "sleeping": 0, "standing": 0}
     for cam in cameras:
         ip = cam["ip"]
         data = stats_by_ip.get(ip, {"stats": {"phone_use": 0, "talking": 0, "sleeping": 0, "standing": 0}, "last_update": None})
+        camera_status = cam.get("_status", "unknown")
         result_cameras.append({
             "ip": ip,
             "name": cam.get("name") or cam.get("group_label", ""),
             "group": cam.get("group", "custom"),
             "group_label": cam.get("group_label", "自定义"),
-            "online": cam.get("_status", "unknown") in ("connected", "online"),
+            "online": camera_status in ("connected", "online"),
+            "status": camera_status,
             "stats": data["stats"],
             "last_update": data["last_update"],
         })
+        for class_name in total:
+            total[class_name] += data["stats"].get(class_name, 0)
     return JSONResponse({
         "cameras": result_cameras,
-        "total": raw["total"],
+        "total": total,
         "online_count": sum(1 for c in result_cameras if c["online"]),
         "total_cameras": len(result_cameras),
     })
@@ -1646,27 +1711,10 @@ async def _generate_report():
 
 @app.get("/api/dashboard/history")
 async def dashboard_history():
-    """Return 24h simulated historical data per camera for chart display."""
-    cameras = _build_camera_list()
-    now = time.time()
-    history: dict[str, list] = {}
-    for cam in cameras:
-        ip = cam["ip"]
-        points = []
-        for h in range(24):
-            t = now - (23 - h) * 3600
-            hour = time.localtime(t).tm_hour
-            # More activity during class hours (8-18)
-            base = random.randint(2, 15) if 8 <= hour <= 18 else random.randint(0, 3)
-            points.append({
-                "time": time.strftime("%Y-%m-%dT%H:00:00", time.localtime(t)),
-                "phone_use": random.randint(0, base),
-                "talking": random.randint(0, base),
-                "sleeping": random.randint(0, max(1, base // 2)),
-                "standing": random.randint(0, max(1, base // 3)),
-            })
-        history[ip] = points
-    return JSONResponse({"history": history, "simulated": True})
+    """Return real in-memory hourly counts for the last 24 hours."""
+    camera_ips = [camera["ip"] for camera in _build_camera_list()]
+    history = _dashboard_stats.get_history(camera_ips)
+    return JSONResponse({"history": history, "simulated": False})
 
 
 # ---- Global RTSP Credentials ----

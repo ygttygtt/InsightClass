@@ -23,15 +23,24 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    Promise.all([
-      getDisplayNames(),
-      getDashboardStats(),
-      getDashboardHistory(),
-    ]).then(([names, s, h]) => {
+    let active = true
+    const load = () => Promise.all([
+      getDisplayNames(), getDashboardStats(), getDashboardHistory(),
+    ]).then(([names, nextStats, nextHistory]) => {
+      if (!active) return
       setDisplayNames(names)
-      setStats(s)
-      setHistory(h.history)
-    }).catch(console.error).finally(() => setLoading(false))
+      setStats(nextStats)
+      setHistory(nextHistory.history)
+    }).catch(console.error).finally(() => {
+      if (active) setLoading(false)
+    })
+
+    void load()
+    const timer = window.setInterval(load, 10_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
   }, [])
 
   const classKeys = ['phone_use', 'talking', 'sleeping', 'standing']
@@ -79,9 +88,9 @@ export default function Dashboard() {
   }
 
   const lineData = (() => {
-    const firstCam = Object.keys(history)[0]
-    if (!firstCam) return { labels: [], datasets: [] }
-    const entries = history[firstCam] || []
+    const cameraHistories = Object.values(history)
+    if (cameraHistories.length === 0) return { labels: [], datasets: [] }
+    const entries = cameraHistories[0] || []
     return {
       labels: entries.map(e => {
         const d = new Date(e.time)
@@ -89,7 +98,10 @@ export default function Dashboard() {
       }),
       datasets: classKeys.map(key => ({
         label: displayNames[key] || key,
-        data: entries.map(e => (e as unknown as Record<string, number>)[key] || 0),
+        data: entries.map((_, index) => cameraHistories.reduce(
+          (sum, cameraEntries) => sum + Number((cameraEntries[index] as unknown as Record<string, number>)?.[key] || 0),
+          0,
+        )),
         borderColor: COLORS[key],
         backgroundColor: COLORS[key] + '20',
         fill: true,
@@ -221,11 +233,11 @@ export default function Dashboard() {
           <h3 className="section-title">摄像头状态</h3>
           <div className="camera-grid">
             {(stats?.cameras || []).map((cam: DashboardCamera) => (
-              <div key={cam.ip} className={`cam-card ${cam.online ? 'online' : 'offline'}`}>
+              <div key={cam.ip} className={`cam-card ${cam.status === 'unknown' ? 'unknown' : cam.online ? 'online' : 'offline'}`}>
                 <div className="cam-card-header">
                   <span className="cam-card-dot" />
                   <span className="cam-card-name">{cam.name || cam.ip}</span>
-                  <span className="cam-card-badge">{cam.online ? '在线' : '离线'}</span>
+                  <span className="cam-card-badge">{cam.status === 'unknown' ? '检测中' : cam.online ? '在线' : '离线'}</span>
                 </div>
                 <div className="cam-card-stats">
                   {classKeys.map(key => (

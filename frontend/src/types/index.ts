@@ -117,6 +117,7 @@ export interface DashboardCamera {
   group: string
   group_label: string
   online: boolean
+  status: 'connected' | 'online' | 'offline' | 'unknown'
   stats: Record<string, number>
   last_update: string | null
 }

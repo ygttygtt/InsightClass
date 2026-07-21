@@ -202,6 +202,7 @@
 
 .cam-card.online { border-left: 3px solid var(--green); }
 .cam-card.offline { border-left: 3px solid var(--red); }
+.cam-card.unknown { border-left: 3px solid var(--yellow); }
 
 .cam-card-header {
   display: flex;
@@ -219,6 +220,7 @@
 
 .cam-card.online .cam-card-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .cam-card.offline .cam-card-dot { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.cam-card.unknown .cam-card-dot { background: var(--yellow); }
 
 .cam-card-name {
   font-size: 14px;
@@ -245,6 +247,11 @@
 .cam-card.offline .cam-card-badge {
   background: rgba(239, 68, 68, .15);
   color: var(--red);
+}
+
+.cam-card.unknown .cam-card-badge {
+  background: rgba(234, 179, 8, .15);
+  color: var(--yellow);
 }
 
 .cam-card-stats {
