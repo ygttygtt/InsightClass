@@ -7,6 +7,18 @@
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" href="/insightclass-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/insightclass-mark-256.png" />
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem('insightclass-theme')
+          const theme = saved === 'dark' || saved === 'light'
+            ? saved
+            : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+        } catch { /* React will apply the safe default. */ }
+      })()
+    </script>
     <title>InsightClass</title>
   </head>
   <body>
