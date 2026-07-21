@@ -10,6 +10,21 @@ from insightclass.web import server
 
 
 class WebPathSecurityTests(unittest.TestCase):
+    def test_class_names_use_bundled_read_only_resource(self):
+        self.assertEqual(
+            server.CLASS_CONFIG,
+            server._RESOURCE_DIR / "configs" / "classes.yaml",
+        )
+        self.assertEqual(
+            server._load_class_display_names(),
+            {
+                "phone_use": "玩手机",
+                "talking": "交谈",
+                "sleeping": "打瞌睡",
+                "standing": "站立",
+            },
+        )
+
     def test_experiment_artifact_cannot_escape_experiments_root(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir) / "experiments"
