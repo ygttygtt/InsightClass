@@ -45,6 +45,8 @@ a = Analysis(
         'yaml',
         'webview',
         'webview.platforms',
+        'pystray',
+        'pystray._win32',
         'onnxruntime',
     ],
     hookspath=[],
@@ -81,7 +83,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,  # keep console for --https cert generation
+    console=False,
     icon=None,
 )
 

@@ -430,8 +430,11 @@ body {
 .settings-dialog {
   width: min(92vw, 560px);
   max-height: min(88vh, 760px);
+  display: flex;
+  flex-direction: column;
 }
 .settings-dialog .cam-modal-body {
+  min-height: 0;
   overflow-y: auto;
 }
 .settings-section-title {
@@ -665,6 +668,40 @@ body {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
+}
+.model-status-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 8px 12px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: rgba(17, 24, 39, .92);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .3);
+  transform: translateX(-50%);
+}
+.model-status-error {
+  color: #fecaca;
+  border-color: rgba(239, 68, 68, .65);
+}
+.model-status-spinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid var(--border-light);
+  border-top-color: var(--accent-light);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
 }
 #source-video, #source-image {
   position: absolute;

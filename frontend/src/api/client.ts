@@ -5,6 +5,7 @@ import type {
   ExperimentSummary,
   DashboardStats,
   LlmSettings,
+  SystemStatus,
   HistoryEntry,
   RtspCredentials,
   FrameDetectionResponse,
@@ -52,6 +53,9 @@ function jsonBody(data: Record<string, unknown>): RequestInit {
 
 export const getCameras = () =>
   request<Camera[]>('/cameras')
+
+export const getSystemStatus = () =>
+  request<SystemStatus>('/system/status')
 
 export const addCamera = (data: { ip: string; name: string; note?: string }) =>
   request<Camera>('/cameras', { method: 'POST', ...jsonBody(data) })

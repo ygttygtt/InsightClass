@@ -31,6 +31,7 @@ web = [
   "python-multipart>=0.0.9",
   "Pillow>=10.0",
   "pywebview>=5.0",
+  "pystray>=0.19",
   "onnxruntime>=1.17",
 ]
 dev = [

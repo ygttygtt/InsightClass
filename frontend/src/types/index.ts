@@ -26,6 +26,15 @@ export interface LlmSettings {
   api_key_masked: string
 }
 
+export interface SystemStatus {
+  service: 'ready'
+  model: {
+    status: 'idle' | 'loading' | 'ready' | 'error'
+    weights_path: string
+    error: string
+  }
+}
+
 export interface FrameDetectionResponse {
   detections: DetectionOut[]
   latency_ms: number

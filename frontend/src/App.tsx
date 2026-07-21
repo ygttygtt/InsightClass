@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
-import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, LlmSettings } from './types'
-import { addCamera, updateCamera, deleteCamera, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, testCamera, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel, getLlmSettings, setLlmSettings, testLlmConnection } from './api/client'
+import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, LlmSettings, SystemStatus } from './types'
+import { addCamera, updateCamera, deleteCamera, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, getSystemStatus, testCamera, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel, getLlmSettings, setLlmSettings, testLlmConnection } from './api/client'
 
 // Health check constants
 const HEALTH_CHECK_INTERVAL = 10000 // 10s
@@ -29,6 +29,7 @@ function App() {
   const [frameCount, setFrameCount] = useState(0)
   const [annotatedImage, setAnnotatedImage] = useState<string | null>(null)
   const [displayNames, setDisplayNames] = useState<DisplayNames>({})
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
 
   // Model controls
   const [model, setModel] = useState('')
@@ -112,6 +113,24 @@ function App() {
       if (!model && d.model) setModel(d.model)
     }).catch(() => {})
     getRtspCredentials().then(setRtspCredentials).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    const pollStatus = async () => {
+      try {
+        const status = await getSystemStatus()
+        if (active) setSystemStatus(status)
+      } catch {
+        // The app remains usable while a transient status poll fails.
+      }
+    }
+    void pollStatus()
+    const timer = window.setInterval(pollStatus, 2000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
   }, [])
 
   useEffect(() => {
@@ -921,6 +940,17 @@ function App() {
           {/* Viewer */}
           <div className="viewer">
             <div className="canvas-wrap">
+              {systemStatus?.model.status === 'loading' && (
+                <div className="model-status-banner" role="status">
+                  <span className="model-status-spinner" />
+                  模型加载中...
+                </div>
+              )}
+              {systemStatus?.model.status === 'error' && (
+                <div className="model-status-banner model-status-error" role="alert" title={systemStatus.model.error}>
+                  模型加载失败: {systemStatus.model.error || '请检查模型配置'}
+                </div>
+              )}
               {source === 'rtsp' && rtspStreamUrl && (
                 <img id="source-image" src={rtspStreamUrl} alt="RTSP stream" />
               )}
@@ -1170,7 +1200,7 @@ function App() {
       {settingsModalOpen && (
         <div className="cam-modal" onClick={() => setSettingsModalOpen(false)}>
           <div className="cam-modal-backdrop" />
-          <div className="cam-modal-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="cam-modal-dialog settings-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="cam-modal-header">
               <span>设置</span>
               <button className="cam-modal-close" onClick={() => setSettingsModalOpen(false)}>&times;</button>
