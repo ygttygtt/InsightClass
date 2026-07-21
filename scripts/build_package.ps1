@@ -42,6 +42,7 @@ try {
         "src\insightclass\web\launcher.pyw",
         "assets\insightclass.ico",
         "assets\insightclass-tray.png",
+        "assets\windows-version-info.txt",
         "configs\classes.yaml",
         "models\onnx\yolo11n_v2.onnx",
         "frontend\package-lock.json"

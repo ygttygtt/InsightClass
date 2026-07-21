@@ -97,6 +97,7 @@ exe = EXE(
     upx=False,
     console=False,
     icon=str(root / 'assets' / 'insightclass.ico'),
+    version=str(root / 'assets' / 'windows-version-info.txt'),
 )
 
 coll = COLLECT(

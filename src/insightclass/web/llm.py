@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from insightclass import __version__
+
 
 class LlmClientError(RuntimeError):
     """A provider, transport or response-format error safe to show in the UI."""
@@ -68,7 +70,7 @@ class OpenAICompatibleClient:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "InsightClass/1.1.0",
+            "User-Agent": f"InsightClass/{__version__}",
         }
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
