@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
 import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem } from './types'
-import { addCamera, updateCamera, deleteCamera, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, getExperiments, getUiDefaults, getCameras, testCamera, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel } from './api/client'
+import { addCamera, updateCamera, deleteCamera, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, testCamera, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel } from './api/client'
 
 // Health check constants
 const HEALTH_CHECK_INTERVAL = 10000 // 10s
@@ -78,6 +78,7 @@ function App() {
   // Refs
   const detectTimerRef = useRef<number | null>(null)
   const healthTimerRef = useRef<number | null>(null)
+  const detectionInFlightRef = useRef(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
@@ -371,27 +372,27 @@ function App() {
   }, [model])
 
   // ---- Stream health check ----
-  const startHealthCheck = useCallback((rtspUrl: string) => {
+  const startHealthCheck = useCallback((cameraIp: string) => {
     if (healthTimerRef.current !== null) {
       clearInterval(healthTimerRef.current)
     }
 
     const check = async () => {
       try {
-        const status = await getStreamStatus()
+        const status = await getStreamStatus(cameraIp)
         const isOk = status.active === true
         setStreamHealthy(isOk)
 
-        if (!isOk) {
+        if (status.status === 'error' || status.status === 'idle') {
           setReconnectAttempts((prev) => {
             if (prev >= MAX_RECONNECT_ATTEMPTS) {
               setStreamHealthy(false)
               return prev
             }
-            setRtspStreamUrl(`/api/stream/rtsp?rtsp_url=${encodeURIComponent(rtspUrl)}&_t=${Date.now()}`)
+            setRtspStreamUrl(`/api/stream/rtsp?camera_ip=${encodeURIComponent(cameraIp)}&_t=${Date.now()}`)
             return prev + 1
           })
-        } else {
+        } else if (isOk) {
           setReconnectAttempts(0)
         }
       } catch {
@@ -399,6 +400,7 @@ function App() {
       }
     }
 
+    void check()
     healthTimerRef.current = window.setInterval(check, HEALTH_CHECK_INTERVAL)
   }, [])
 
@@ -410,8 +412,9 @@ function App() {
     setSource(newSource)
     if (newSource !== 'rtsp') {
       setRtspStreamUrl(null)
+      if (selectedCamera) void stopStream(selectedCamera.ip).catch(() => {})
     }
-  }, [stopAll, resetStats])
+  }, [selectedCamera, stopAll, resetStats])
 
   // ---- React to camera selection ----
   useEffect(() => {
@@ -424,14 +427,11 @@ function App() {
     resetStats()
     setSource('rtsp')
 
-    const rtspUrl =
-      selectedCamera.rtsp_url ||
-      `rtsp://admin:1000phone@${selectedCamera.ip}:554/Streaming/Channels/101`
-    const streamUrl = `/api/stream/rtsp?rtsp_url=${encodeURIComponent(rtspUrl)}`
+    const streamUrl = `/api/stream/rtsp?camera_ip=${encodeURIComponent(selectedCamera.ip)}`
     setRtspStreamUrl(streamUrl)
 
-    startHealthCheck(rtspUrl)
-  }, [selectedCamera])
+    startHealthCheck(selectedCamera.ip)
+  }, [selectedCamera, resetStats, startHealthCheck, stopAll])
 
   // ---- Start detection ----
   const handleStart = useCallback(() => {
@@ -441,13 +441,11 @@ function App() {
       resetStats()
       setRunning(true)
 
-      const rtspUrl =
-        selectedCamera.rtsp_url ||
-        `rtsp://admin:1000phone@${selectedCamera.ip}:554/Streaming/Channels/101`
-
       const doDetect = async () => {
+        if (detectionInFlightRef.current) return
+        detectionInFlightRef.current = true
         const fd = new FormData()
-        fd.append('rtsp_url', rtspUrl)
+        fd.append('camera_ip', selectedCamera.ip)
         try {
           const res = await detectRtsp(fd)
           if (res.frame_width > 0 && res.frame_height > 0) {
@@ -457,11 +455,14 @@ function App() {
           }
         } catch {
           // skip failed frames
+        } finally {
+          detectionInFlightRef.current = false
         }
       }
 
+      void doDetect()
       detectTimerRef.current = window.setInterval(doDetect, DETECT_INTERVAL)
-      startHealthCheck(rtspUrl)
+      startHealthCheck(selectedCamera.ip)
     } else if (source === 'image') {
       document.querySelector<HTMLInputElement>('#image-input')?.click()
     } else if (source === 'video') {

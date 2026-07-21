@@ -57,7 +57,6 @@ export interface Camera {
   group: string
   group_label?: string
   note?: string
-  rtsp_url?: string
 }
 
 export interface DisplayNames {

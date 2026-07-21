@@ -139,11 +139,16 @@ export const downloadBatchExport = async (batchId: string, format: 'json' | 'csv
 // Stream management
 // ---------------------------------------------------------------------------
 
-export const stopStream = () =>
-  request<{ ok: boolean }>('/stream/stop', { method: 'POST' })
+export const stopStream = (cameraIp?: string) =>
+  request<{ ok: boolean }>(
+    `/stream/stop${cameraIp ? `?camera_ip=${encodeURIComponent(cameraIp)}` : ''}`,
+    { method: 'POST' },
+  )
 
-export const getStreamStatus = () =>
-  request<{ active: boolean; rtsp_url?: string }>('/stream/status')
+export const getStreamStatus = (cameraIp: string) =>
+  request<{ active: boolean; status: 'idle' | 'connecting' | 'streaming' | 'error'; error: string; camera_ip: string }>(
+    `/stream/status?camera_ip=${encodeURIComponent(cameraIp)}`,
+  )
 
 // ---------------------------------------------------------------------------
 // Settings

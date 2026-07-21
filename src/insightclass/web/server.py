@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import csv
+import ipaddress
 import io
 import json
 import logging
@@ -19,6 +20,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 import cv2
 import numpy as np
@@ -77,7 +79,7 @@ DEFAULT_RTSP_PASSWORD = "1000phone"
 DEFAULT_RTSP_PORT = 554
 
 _rtsp_lock = threading.Lock()
-_FFMPEG_OPTIONS = "rtsp_transport;tcp"
+_FFMPEG_OPTIONS = "rtsp_transport;tcp|stimeout;5000000|rw_timeout;5000000"
 
 
 class RtspStreamManager:
@@ -90,47 +92,65 @@ class RtspStreamManager:
         self._lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
+        self._lifecycle_lock = threading.RLock()
         self._status: str = "idle"  # idle / connecting / streaming / error
         self._error: str = ""
 
     def start(self, rtsp_url: str) -> bool:
-        if self._running and self._url == rtsp_url:
-            return True
-        self.stop()
-        self._url = rtsp_url
-        self._running = True
-        self._status = "connecting"
-        self._error = ""
-        self._frame = None
-        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._running and self._url == rtsp_url:
+                return True
+            self.stop()
+            self._url = rtsp_url
+            self._running = True
+            self._status = "connecting"
+            self._error = ""
+            self._frame = None
+            self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self._thread.start()
         return True
 
     def stop(self):
-        self._running = False
-        if self._cap:
-            self._cap.release()
-            self._cap = None
-        if self._thread:
-            self._thread.join(timeout=2)
+        with self._lifecycle_lock:
+            self._running = False
+            if self._cap:
+                self._cap.release()
+                self._cap = None
+            if self._thread and self._thread is not threading.current_thread():
+                self._thread.join(timeout=6)
             self._thread = None
-        self._status = "idle"
-        self._error = ""
-        with self._lock:
-            self._frame = None
+            self._status = "idle"
+            self._error = ""
+            with self._lock:
+                self._frame = None
 
     def get_frame(self) -> bytes | None:
         with self._lock:
             return self._frame
 
     def get_status(self) -> dict:
-        return {"status": self._status, "error": self._error}
+        return {
+            "active": self._running and self._status == "streaming",
+            "status": self._status,
+            "error": self._error,
+        }
 
-    def _open_capture(self):
+    def _open_capture(self, rtsp_url: str | None = None):
         """Create a VideoCapture with short timeout."""
         with _rtsp_lock:
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = _FFMPEG_OPTIONS
-        self._cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+        timeout_params = [
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+            5000,
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+            5000,
+        ]
+        try:
+            self._cap = cv2.VideoCapture(
+                rtsp_url or self._url, cv2.CAP_FFMPEG, timeout_params
+            )
+        except (TypeError, cv2.error):
+            self._cap = cv2.VideoCapture(rtsp_url or self._url, cv2.CAP_FFMPEG)
 
     def _capture_loop(self):
         try:
@@ -159,8 +179,7 @@ class RtspStreamManager:
                 if self._cap:
                     self._cap.release()
                     self._cap = None
-                self._url = sub_url
-                self._open_capture()
+                self._open_capture(sub_url)
                 if not self._cap or not self._cap.isOpened():
                     self._status = "error"
                     self._error = "主码流黑屏，子码流连接失败"
@@ -204,12 +223,63 @@ class RtspStreamManager:
             self._status = "error"
             self._error = str(e)
         finally:
+            self._running = False
             if self._cap:
                 self._cap.release()
                 self._cap = None
 
 
-_stream_manager = RtspStreamManager()
+class RtspStreamRegistry:
+    """Own one persistent capture per camera instead of one global stream."""
+
+    def __init__(self, manager_factory=RtspStreamManager):
+        self._manager_factory = manager_factory
+        self._managers: dict[str, RtspStreamManager] = {}
+        self._lock = threading.Lock()
+
+    def start(self, camera_ip: str, rtsp_url: str) -> RtspStreamManager:
+        with self._lock:
+            manager = self._managers.get(camera_ip)
+            if manager is None:
+                manager = self._manager_factory()
+                self._managers[camera_ip] = manager
+        manager.start(rtsp_url)
+        return manager
+
+    def get(self, camera_ip: str) -> RtspStreamManager | None:
+        with self._lock:
+            return self._managers.get(camera_ip)
+
+    def get_status(self, camera_ip: str) -> dict:
+        manager = self.get(camera_ip)
+        status = manager.get_status() if manager else {
+            "active": False,
+            "status": "idle",
+            "error": "",
+        }
+        return {**status, "camera_ip": camera_ip}
+
+    def is_active(self, camera_ip: str) -> bool:
+        manager = self.get(camera_ip)
+        if manager is None:
+            return False
+        return manager.get_status()["status"] in ("connecting", "streaming")
+
+    def stop(self, camera_ip: str) -> None:
+        with self._lock:
+            manager = self._managers.pop(camera_ip, None)
+        if manager:
+            manager.stop()
+
+    def stop_all(self) -> None:
+        with self._lock:
+            managers = list(self._managers.values())
+            self._managers.clear()
+        for manager in managers:
+            manager.stop()
+
+
+_stream_registry = RtspStreamRegistry()
 
 _batch_jobs: dict[str, dict] = {}
 
@@ -348,6 +418,7 @@ async def _ping_cameras_periodically():
     """Background task to check camera reachability every 30 seconds."""
     while True:
         cameras = _load_custom_cameras()
+        port = int(_get_rtsp_credentials().get("port", DEFAULT_RTSP_PORT))
         for cam in cameras:
             ip = cam.get("ip", "")
             if not ip:
@@ -355,7 +426,7 @@ async def _ping_cameras_periodically():
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(2)
-                result = sock.connect_ex((ip, 554))
+                result = sock.connect_ex((ip, port))
                 sock.close()
                 _camera_ping_results[ip] = {
                     "reachable": result == 0,
@@ -403,7 +474,40 @@ def _build_rtsp_url(ip: str, username: str = "", password: str = "", port: int =
         username = creds["username"]
         password = creds["password"]
         port = port or creds["port"]
-    return f"rtsp://{username}:{password}@{ip}:{port}/Streaming/Channels/101"
+    _validate_camera_ip(ip)
+    if not 1 <= int(port) <= 65535:
+        raise ValueError("RTSP port must be between 1 and 65535")
+    encoded_username = quote(str(username), safe="")
+    encoded_password = quote(str(password), safe="")
+    return (
+        f"rtsp://{encoded_username}:{encoded_password}@{ip}:{int(port)}"
+        "/Streaming/Channels/101"
+    )
+
+
+def _validate_camera_ip(ip: str) -> str:
+    """Validate and normalize the IPv4 address used by camera endpoints."""
+    try:
+        parsed = ipaddress.ip_address(ip.strip())
+    except ValueError as exc:
+        raise ValueError("Invalid camera IP address") from exc
+    if parsed.version != 4:
+        raise ValueError("Only IPv4 camera addresses are supported")
+    return str(parsed)
+
+
+def _require_camera_ip(ip: str) -> str:
+    try:
+        return _validate_camera_ip(ip)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _resolve_camera_rtsp_url(camera_ip: str) -> str:
+    normalized_ip = _validate_camera_ip(camera_ip)
+    if not any(cam.get("ip") == normalized_ip for cam in _load_custom_cameras()):
+        raise HTTPException(404, "Camera not found")
+    return _build_rtsp_url(normalized_ip)
 
 
 def _get_experiments() -> list[dict]:
@@ -617,6 +721,7 @@ async def lifespan(app: FastAPI):
     ping_task = asyncio.create_task(_ping_cameras_periodically())
     yield
     ping_task.cancel()
+    _stream_registry.stop_all()
     clear_cache()
 
 
@@ -1185,16 +1290,13 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
     custom_cameras = _load_custom_cameras()
     creds = _get_rtsp_credentials()
 
-    # Determine which IP is currently streaming (if any)
-    streaming_ip = None
-    if _stream_manager._url and _stream_manager._status in ("connecting", "streaming"):
-        _m = re.search(r"@(\d+\.\d+\.\d+\.\d+)", _stream_manager._url)
-        if _m:
-            streaming_ip = _m.group(1)
-
     cameras = []
     for cam in custom_cameras:
-        ip = cam.get("ip", "")
+        try:
+            ip = _validate_camera_ip(str(cam.get("ip", "")))
+        except ValueError:
+            logger.warning("Skipping invalid camera IP in config: %s", cam.get("ip"))
+            continue
         if not ip:
             continue
         entry = {
@@ -1202,11 +1304,10 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
             "name": cam.get("name", ""),
             "group": cam.get("group", "custom"),
             "group_label": cam.get("group_label", "自定义"),
-            "rtsp_url": _build_rtsp_url(ip),
             "note": cam.get("note", ""),
             "custom": True,
             "_status": (
-                "connected" if ip == streaming_ip
+                "connected" if _stream_registry.is_active(ip)
                 else ("online" if _camera_ping_results.get(ip, {}).get("reachable") else "offline")
             ),
         }
@@ -1226,7 +1327,10 @@ async def list_cameras():
 @app.post("/api/cameras")
 async def add_camera(request: Request):
     body = await request.json()
-    ip = body.get("ip", "").strip()
+    try:
+        ip = _validate_camera_ip(body.get("ip", ""))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
     if not ip:
         return JSONResponse({"error": "IP is required"}, status_code=400)
     cameras = _load_custom_cameras()
@@ -1266,9 +1370,13 @@ async def update_camera(ip: str, request: Request):
 
 @app.delete("/api/cameras/{ip}")
 async def delete_camera(ip: str):
+    normalized_ip = _require_camera_ip(ip)
     cameras = _load_custom_cameras()
-    cameras = [c for c in cameras if c["ip"] != ip]
+    if not any(c.get("ip") == normalized_ip for c in cameras):
+        return JSONResponse({"error": "Camera not found"}, status_code=404)
+    cameras = [c for c in cameras if c.get("ip") != normalized_ip]
     _save_custom_cameras(cameras)
+    _stream_registry.stop(normalized_ip)
     return JSONResponse({"ok": True}, media_type="application/json; charset=utf-8")
 
 
@@ -1279,7 +1387,7 @@ async def test_single_camera(ip: str):
     cam = next((c for c in cameras if c["ip"] == ip), None)
     if not cam:
         return JSONResponse({"error": "Camera not found"}, status_code=404)
-    rtsp_url = cam.get("rtsp_url", "")
+    rtsp_url = _build_rtsp_url(ip)
     ok = await asyncio.to_thread(_test_camera_connection, rtsp_url)
     return JSONResponse({"ip": ip, "status": "connected" if ok else "disconnected"})
 
@@ -1293,11 +1401,11 @@ async def test_cameras(request: Request):
 
     async def _test_one(cam):
         if isinstance(cam, dict):
-            ip = cam["ip"]
-            rtsp_url = cam.get("rtsp_url", _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT))
+            ip = _validate_camera_ip(cam["ip"])
+            rtsp_url = _build_rtsp_url(ip)
         else:
-            ip = str(cam)
-            rtsp_url = _build_rtsp_url(ip, DEFAULT_RTSP_USERNAME, DEFAULT_RTSP_PASSWORD, DEFAULT_RTSP_PORT)
+            ip = _validate_camera_ip(str(cam))
+            rtsp_url = _build_rtsp_url(ip)
         ok = await asyncio.to_thread(_test_camera_connection, rtsp_url)
         return ip, "connected" if ok else "disconnected"
 
@@ -1320,52 +1428,68 @@ def _test_camera_connection(rtsp_url: str) -> bool:
 
 
 @app.get("/api/stream/rtsp")
-async def stream_rtsp(rtsp_url: str):
-    """MJPEG stream — one persistent connection, no base64 overhead."""
+async def stream_rtsp(request: Request, camera_ip: str):
+    """MJPEG stream for one configured camera."""
+    normalized_ip = _require_camera_ip(camera_ip)
+    rtsp_url = _resolve_camera_rtsp_url(normalized_ip)
+    manager = _stream_registry.start(normalized_ip, rtsp_url)
 
-    def generate():
-        _stream_manager.start(rtsp_url)
-        while _stream_manager._running:
-            frame = _stream_manager.get_frame()
-            if frame:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-                )
-            else:
-                time.sleep(0.05)
+    async def generate():
+        try:
+            while manager.get_status()["active"] or manager.get_status()["status"] == "connecting":
+                if await request.is_disconnected():
+                    break
+                frame = manager.get_frame()
+                if frame:
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                    )
+                else:
+                    await asyncio.sleep(0.05)
+        finally:
+            # The manager is shared with the detection endpoint. Stopping it
+            # here would make a browser tab disconnect the detector.
+            pass
 
     return StreamingResponse(
         generate(),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
 
 
 @app.post("/api/stream/stop")
-async def stream_stop():
-    _stream_manager.stop()
+async def stream_stop(camera_ip: str = ""):
+    if camera_ip:
+        _stream_registry.stop(_require_camera_ip(camera_ip))
+    else:
+        _stream_registry.stop_all()
     return JSONResponse({"ok": True})
 
 
 @app.get("/api/stream/status")
-async def stream_status():
-    return JSONResponse(_stream_manager.get_status())
+async def stream_status(camera_ip: str):
+    normalized_ip = _require_camera_ip(camera_ip)
+    return JSONResponse(_stream_registry.get_status(normalized_ip))
 
 
 @app.post("/api/detect/rtsp")
 async def detect_rtsp(
-    rtsp_url: str = Form(...),
+    camera_ip: str = Form(...),
     model: str = Form(default=""),
     confidence: float = Form(default=DEFAULT_CONFIDENCE),
     iou: float = Form(default=DEFAULT_IOU),
 ):
     t0 = time.time()
 
-    # Ensure stream is running for this URL
-    _stream_manager.start(rtsp_url)
+    normalized_ip = _require_camera_ip(camera_ip)
+    rtsp_url = _resolve_camera_rtsp_url(normalized_ip)
+    # Ensure this camera's stream is running.
+    manager = _stream_registry.start(normalized_ip, rtsp_url)
 
     # Grab the latest frame from the persistent stream
-    frame_bytes = _stream_manager.get_frame()
+    frame_bytes = manager.get_frame()
     if not frame_bytes:
         return FrameDetectionResponse(detections=[], latency_ms=0, frame_width=0, frame_height=0)
 
@@ -1401,9 +1525,8 @@ async def detect_rtsp(
         logger.warning("detect_rtsp failed: %s", exc)
 
     # Record dashboard stats
-    cam_ip = _extract_ip_from_rtsp(rtsp_url)
     for det in detections:
-        _dashboard_stats.record(cam_ip, det.class_name)
+        _dashboard_stats.record(normalized_ip, det.class_name)
 
     latency = (time.time() - t0) * 1000
     return FrameDetectionResponse(
@@ -1528,6 +1651,7 @@ async def set_rtsp_credentials(request: Request):
         "port": body.get("port", DEFAULT_RTSP_PORT),
     }
     _save_app_config(cfg)
+    _stream_registry.stop_all()
     return JSONResponse({"ok": True})
 
 
