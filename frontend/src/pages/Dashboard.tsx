@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, PointElement, LineElement, Filler } from 'chart.js'
 import { Doughnut, Bar, Line } from 'react-chartjs-2'
 import type { DashboardStats, DashboardCamera, DisplayNames, HistoryEntry } from '../types'
-import { getDashboardStats, getDashboardHistory, getDisplayNames, downloadDashboardReport } from '../api/client'
+import { analyzeWithLlm, getDashboardStats, getDashboardHistory, getDisplayNames, downloadDashboardReport } from '../api/client'
 import '../dashboard.css'
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, PointElement, LineElement, Filler)
@@ -21,6 +21,10 @@ export default function Dashboard() {
   const [displayNames, setDisplayNames] = useState<DisplayNames>({})
   const [history, setHistory] = useState<Record<string, HistoryEntry[]>>({})
   const [loading, setLoading] = useState(true)
+  const [analysisOpen, setAnalysisOpen] = useState(false)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [analysis, setAnalysis] = useState('')
+  const [analysisError, setAnalysisError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -45,6 +49,25 @@ export default function Dashboard() {
 
   const classKeys = ['phone_use', 'talking', 'sleeping', 'standing']
   const totalDetections = stats ? Object.values(stats.total).reduce((a, b) => a + b, 0) : 0
+
+  const handleAnalyze = async () => {
+    if (!stats || analysisLoading) return
+    setAnalysisOpen(true)
+    setAnalysisLoading(true)
+    setAnalysis('')
+    setAnalysisError('')
+    try {
+      const result = await analyzeWithLlm({
+        prompt: '请总结当前课堂行为风险、指出需要优先关注的摄像头，并给出三条可执行建议。',
+        context: { stats, history },
+      })
+      setAnalysis(result.analysis)
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : '分析失败')
+    } finally {
+      setAnalysisLoading(false)
+    }
+  }
 
   const donutData = {
     labels: classKeys.map(k => displayNames[k] || k),
@@ -145,10 +168,16 @@ export default function Dashboard() {
           </button>
           <h1>监控大屏</h1>
         </div>
-        <button className="btn-report" onClick={() => downloadDashboardReport()}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          导出报告
-        </button>
+        <div className="dashboard-header-actions">
+          <button className="btn-ai" onClick={handleAnalyze} disabled={!stats || analysisLoading}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="8"/></svg>
+            AI 分析
+          </button>
+          <button className="btn-report" onClick={() => downloadDashboardReport()}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            导出报告
+          </button>
+        </div>
       </header>
 
       <div className="dashboard-body">
@@ -259,6 +288,23 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {analysisOpen && (
+        <div className="cam-modal" onClick={() => setAnalysisOpen(false)}>
+          <div className="cam-modal-backdrop" />
+          <div className="cam-modal-dialog analysis-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="cam-modal-header">
+              <span>课堂行为分析</span>
+              <button className="cam-modal-close" onClick={() => setAnalysisOpen(false)}>&times;</button>
+            </div>
+            <div className="analysis-body">
+              {analysisLoading && <div className="analysis-loading"><div className="spinner" /><span>正在分析...</span></div>}
+              {analysisError && <div className="analysis-error">{analysisError}</div>}
+              {analysis && <div className="analysis-content">{analysis}</div>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

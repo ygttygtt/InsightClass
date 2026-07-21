@@ -33,6 +33,12 @@
   gap: 16px;
 }
 
+.dashboard-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .dashboard-header h1 {
   font-size: 16px;
   font-weight: 600;
@@ -72,6 +78,29 @@
 }
 
 .btn-report:hover { background: var(--accent-light); }
+
+.btn-ai {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font);
+  cursor: pointer;
+}
+
+.btn-ai:hover { background: var(--bg-hover); }
+.btn-ai:disabled { opacity: .5; cursor: not-allowed; }
+
+.analysis-dialog { width: min(92vw, 680px); }
+.analysis-body { min-height: 220px; max-height: 65vh; overflow-y: auto; padding: 20px; }
+.analysis-loading { min-height: 180px; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--text-secondary); }
+.analysis-content { color: var(--text-primary); font-size: 14px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.analysis-error { color: var(--red); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 
 .dashboard-body {
   flex: 1;

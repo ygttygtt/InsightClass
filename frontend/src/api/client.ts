@@ -4,6 +4,7 @@ import type {
   UiDefaults,
   ExperimentSummary,
   DashboardStats,
+  LlmSettings,
   HistoryEntry,
   RtspCredentials,
   FrameDetectionResponse,
@@ -159,6 +160,21 @@ export const getDisplayNames = () =>
 
 export const getUiDefaults = () =>
   request<UiDefaults>('/settings/ui-defaults')
+
+export const getLlmSettings = () =>
+  request<LlmSettings>('/settings/llm')
+
+export const setLlmSettings = (data: { base_url: string; model: string; api_key?: string; timeout: number }) =>
+  request<LlmSettings>('/settings/llm', { method: 'POST', ...jsonBody(data) })
+
+export const testLlmConnection = () =>
+  request<{ ok: boolean; model: string; preview: string }>('/llm/test', { method: 'POST' })
+
+export const analyzeWithLlm = (data: { prompt: string; context: unknown }) =>
+  request<{ analysis: string; model: string; usage: Record<string, number> }>('/llm/analyze', {
+    method: 'POST',
+    ...jsonBody(data),
+  })
 
 export const getDefaultModel = () =>
   request<{ model: string }>('/settings/default-model')

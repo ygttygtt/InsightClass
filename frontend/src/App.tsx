@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
-import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem } from './types'
-import { addCamera, updateCamera, deleteCamera, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, testCamera, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel } from './api/client'
+import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, LlmSettings } from './types'
+import { addCamera, updateCamera, deleteCamera, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, testCamera, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel, getLlmSettings, setLlmSettings, testLlmConnection } from './api/client'
 
 // Health check constants
 const HEALTH_CHECK_INTERVAL = 10000 // 10s
@@ -70,6 +70,11 @@ function App() {
   // Settings modal state
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [rtspCredentials, setRtspCredentials] = useState({ username: 'admin', password: '', port: 554 })
+  const [llmSettings, setLlmSettingsState] = useState<LlmSettings | null>(null)
+  const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', timeout: 60 })
+  const [llmSaving, setLlmSaving] = useState(false)
+  const [llmTesting, setLlmTesting] = useState(false)
+  const [llmTestMessage, setLlmTestMessage] = useState('')
 
   // Health check state
   const [, setStreamHealthy] = useState<boolean | null>(null)
@@ -108,6 +113,19 @@ function App() {
     }).catch(() => {})
     getRtspCredentials().then(setRtspCredentials).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!settingsModalOpen) return
+    getLlmSettings().then((settings) => {
+      setLlmSettingsState(settings)
+      setLlmForm({
+        base_url: settings.base_url,
+        model: settings.model,
+        api_key: '',
+        timeout: settings.timeout,
+      })
+    }).catch(() => setLlmSettingsState(null))
+  }, [settingsModalOpen])
 
   // ---- Camera management ----
   const handleSelectCamera = (camera: Camera) => {
@@ -362,6 +380,34 @@ function App() {
       alert(`保存失败: ${err instanceof Error ? err.message : '未知错误'}`)
     }
   }, [rtspCredentials])
+
+  const handleSaveLlm = useCallback(async () => {
+    setLlmSaving(true)
+    setLlmTestMessage('')
+    try {
+      const settings = await setLlmSettings(llmForm)
+      setLlmSettingsState(settings)
+      setLlmForm((prev) => ({ ...prev, api_key: '' }))
+      setLlmTestMessage('大模型设置已保存')
+    } catch (err) {
+      setLlmTestMessage(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setLlmSaving(false)
+    }
+  }, [llmForm])
+
+  const handleTestLlm = useCallback(async () => {
+    setLlmTesting(true)
+    setLlmTestMessage('正在测试连接...')
+    try {
+      const result = await testLlmConnection()
+      setLlmTestMessage(`连接成功: ${result.preview}`)
+    } catch (err) {
+      setLlmTestMessage(err instanceof Error ? err.message : '连接失败')
+    } finally {
+      setLlmTesting(false)
+    }
+  }, [])
 
   const handleSetDefaultModel = useCallback(async () => {
     if (!model) return
@@ -1045,12 +1091,13 @@ function App() {
       {modalOpen && (
         <div id="cam-modal" className="cam-modal" onClick={() => { setModalOpen(false); setEditingCamera(null) }}>
           <div className="cam-modal-backdrop" />
-          <div className="cam-modal-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="cam-modal-dialog settings-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="cam-modal-header">
               <span id="cam-modal-title">{editingCamera ? '编辑摄像头' : '添加摄像头'}</span>
               <button className="cam-modal-close" onClick={() => { setModalOpen(false); setEditingCamera(null) }}>&times;</button>
             </div>
             <div className="cam-modal-body">
+              <h3 className="settings-section-title">摄像头连接</h3>
               <div className="cam-field">
                 <label>IP 地址 <span className="required">*</span></label>
                 <input type="text" id="cam-ip" placeholder="192.168.1.100" defaultValue={editingCamera?.ip || ''} disabled={!!editingCamera} style={editingCamera ? { opacity: 0.5 } : {}} />
@@ -1141,6 +1188,31 @@ function App() {
                 <label>RTSP 端口</label>
                 <input type="number" value={rtspCredentials.port} onChange={(e) => setRtspCredentials(prev => ({ ...prev, port: parseInt(e.target.value) || 554 }))} />
               </div>
+              <h3 className="settings-section-title">大模型分析</h3>
+              <div className="cam-field">
+                <label>OpenAI 兼容 Base URL</label>
+                <input type="url" value={llmForm.base_url} placeholder="https://api.openai.com/v1" onChange={(e) => setLlmForm(prev => ({ ...prev, base_url: e.target.value }))} />
+              </div>
+              <div className="cam-form-row">
+                <div className="cam-field">
+                  <label>模型</label>
+                  <input type="text" value={llmForm.model} onChange={(e) => setLlmForm(prev => ({ ...prev, model: e.target.value }))} />
+                </div>
+                <div className="cam-field settings-timeout">
+                  <label>超时 (秒)</label>
+                  <input type="number" min="1" max="300" value={llmForm.timeout} onChange={(e) => setLlmForm(prev => ({ ...prev, timeout: Number(e.target.value) || 60 }))} />
+                </div>
+              </div>
+              <div className="cam-field">
+                <label>API Key {llmSettings?.has_api_key ? `(${llmSettings.api_key_masked})` : ''}</label>
+                <input type="password" value={llmForm.api_key} placeholder={llmSettings?.has_api_key ? '留空则保留现有密钥' : '可选，本地服务通常无需密钥'} onChange={(e) => setLlmForm(prev => ({ ...prev, api_key: e.target.value }))} />
+              </div>
+              <div className="settings-inline-actions">
+                <button className="cam-btn cam-btn-cancel" disabled={llmTesting || !llmSettings?.model} onClick={handleTestLlm}>测试连接</button>
+                <button className="cam-btn cam-btn-save" disabled={llmSaving || !llmForm.base_url || !llmForm.model} onClick={handleSaveLlm}>{llmSaving ? '保存中...' : '保存大模型设置'}</button>
+              </div>
+              {llmTestMessage && <div className="settings-status" role="status">{llmTestMessage}</div>}
+              <h3 className="settings-section-title">摄像头导入</h3>
               <div className="cam-field">
                 <label>批量导入摄像头 (CSV)</label>
                 <label className="upload-zone upload-zone-sm" style={{ cursor: 'pointer', marginTop: '4px' }}>
@@ -1156,7 +1228,7 @@ function App() {
             </div>
             <div className="cam-modal-footer">
               <button className="cam-btn cam-btn-cancel" onClick={() => setSettingsModalOpen(false)}>取消</button>
-              <button className="cam-btn cam-btn-save" onClick={handleSaveRtspCredentials}>保存</button>
+              <button className="cam-btn cam-btn-save" onClick={handleSaveRtspCredentials}>保存摄像头设置</button>
             </div>
           </div>
         </div>

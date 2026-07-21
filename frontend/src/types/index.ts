@@ -18,6 +18,14 @@ export interface RtspCredentials {
   port: number
 }
 
+export interface LlmSettings {
+  base_url: string
+  model: string
+  timeout: number
+  has_api_key: boolean
+  api_key_masked: string
+}
+
 export interface FrameDetectionResponse {
   detections: DetectionOut[]
   latency_ms: number

@@ -35,6 +35,11 @@ from insightclass.backends.onnx_backend import OnnxBackend
 from insightclass.utils.experiments import collect_experiment_records
 from insightclass.schemas import InferenceConfig
 from insightclass.utils.serialization import load_json, load_yaml, save_yaml
+from insightclass.web.llm import (
+    LlmClientError,
+    OpenAICompatibleClient,
+    OpenAICompatibleConfig,
+)
 from insightclass.web.model_cache import clear_cache, get_model, preload_model
 from insightclass.web.schemas import (
     BatchDetectionResult,
@@ -72,6 +77,7 @@ CAMERAS_CONFIG = _BASE_DIR / "configs" / "cameras.yaml"
 APP_CONFIG = _BASE_DIR / "configs" / "app.yaml"
 DEFAULT_CONFIDENCE = 0.5
 DEFAULT_IOU = 0.45
+DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
 
 # RTSP 默认凭据（可通过 Web 界面全局设置）
 DEFAULT_RTSP_USERNAME = "admin"
@@ -1016,6 +1022,103 @@ async def get_ui_defaults():
     })
 
 
+@app.get("/api/settings/llm")
+async def get_llm_settings():
+    return JSONResponse(_public_llm_config())
+
+
+@app.post("/api/settings/llm")
+async def set_llm_settings(request: Request):
+    body = await request.json()
+    current = _load_app_config().get("llm", {})
+    if not isinstance(current, dict):
+        current = {}
+    api_key = body.get("api_key")
+    if body.get("clear_api_key"):
+        api_key = ""
+    elif api_key is None or not str(api_key).strip():
+        api_key = current.get("api_key", "")
+    try:
+        config = OpenAICompatibleConfig(
+            base_url=str(body.get("base_url", current.get("base_url", DEFAULT_LLM_BASE_URL))),
+            model=str(body.get("model", current.get("model", ""))),
+            api_key=str(api_key),
+            timeout=float(body.get("timeout", current.get("timeout", 60))),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    _update_app_config({
+        "llm": {
+            "base_url": config.base_url,
+            "model": config.model,
+            "api_key": config.api_key,
+            "timeout": config.timeout,
+        }
+    })
+    return JSONResponse(_public_llm_config())
+
+
+@app.post("/api/llm/test")
+async def test_llm_connection():
+    client = _build_llm_client()
+    try:
+        result = await asyncio.to_thread(
+            client.chat,
+            [{
+                "role": "user",
+                "content": "Reply with the single word OK.",
+            }],
+            temperature=0,
+            max_tokens=8,
+        )
+    except LlmClientError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return JSONResponse({"ok": True, "model": result["model"], "preview": result["content"][:200]})
+
+
+@app.post("/api/llm/analyze")
+async def analyze_with_llm(request: Request):
+    body = await request.json()
+    prompt = str(body.get("prompt", "")).strip()
+    if not prompt:
+        raise HTTPException(422, "Prompt is required")
+    if len(prompt) > 4000:
+        raise HTTPException(413, "Prompt is too long")
+    context = body.get("context", {})
+    try:
+        context_text = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Context must be JSON serializable") from exc
+    if len(context_text) > 20000:
+        raise HTTPException(413, "Analysis context is too large")
+
+    client = _build_llm_client()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是课堂行为检测分析助手。只能根据提供的统计数据回答，"
+                "不要编造未提供的事实；用简洁、可执行的中文给出结论和建议。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"{prompt}\n\n统计数据(JSON):\n{context_text}",
+        },
+    ]
+    try:
+        result = await asyncio.to_thread(
+            client.chat, messages, temperature=0.2, max_tokens=800
+        )
+    except LlmClientError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return JSONResponse({
+        "analysis": result["content"],
+        "model": result["model"],
+        "usage": result.get("usage", {}),
+    })
+
+
 @app.post("/api/detect/frame")
 async def detect_frame(
     image: UploadFile = File(...),
@@ -1735,6 +1838,38 @@ async def set_rtsp_credentials(request: Request):
         "password": body.get("password", DEFAULT_RTSP_PASSWORD),
         "port": body.get("port", DEFAULT_RTSP_PORT),
     }
+
+
+def _get_llm_config() -> dict:
+    cfg = _load_app_config().get("llm", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {
+        "base_url": os.getenv("OPENAI_BASE_URL", cfg.get("base_url", DEFAULT_LLM_BASE_URL)),
+        "model": os.getenv("OPENAI_MODEL", cfg.get("model", "")),
+        "api_key": os.getenv("OPENAI_API_KEY", cfg.get("api_key", "")),
+        "timeout": float(cfg.get("timeout", 60)),
+    }
+
+
+def _public_llm_config() -> dict:
+    config = _get_llm_config()
+    key = str(config.get("api_key", ""))
+    return {
+        "base_url": config["base_url"],
+        "model": config["model"],
+        "timeout": config["timeout"],
+        "has_api_key": bool(key),
+        "api_key_masked": f"...{key[-4:]}" if key else "",
+    }
+
+
+def _build_llm_client() -> OpenAICompatibleClient:
+    config = _get_llm_config()
+    try:
+        return OpenAICompatibleClient(OpenAICompatibleConfig(**config))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     try:
         port = int(rtsp_credentials["port"])
     except (TypeError, ValueError) as exc:

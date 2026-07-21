@@ -427,6 +427,39 @@ body {
 }
 .cam-modal-close:hover { color: var(--text-primary); }
 .cam-modal-body { padding: 16px; }
+.settings-dialog {
+  width: min(92vw, 560px);
+  max-height: min(88vh, 760px);
+}
+.settings-dialog .cam-modal-body {
+  overflow-y: auto;
+}
+.settings-section-title {
+  margin: 14px 0 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.settings-section-title:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.settings-timeout { max-width: 120px; }
+.settings-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.settings-status {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .cam-modal-footer {
   display: flex;
   justify-content: flex-end;
