@@ -4,6 +4,8 @@ import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearSca
 import { Doughnut, Bar, Line } from 'react-chartjs-2'
 import type { DashboardStats, DashboardCamera, DisplayNames, HistoryEntry } from '../types'
 import { analyzeWithLlm, getDashboardStats, getDashboardHistory, getDisplayNames, downloadDashboardReport } from '../api/client'
+import ThemeToggle from '../components/ThemeToggle'
+import type { Theme } from '../theme'
 import '../dashboard.css'
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, PointElement, LineElement, Filler)
@@ -15,7 +17,12 @@ const COLORS: Record<string, string> = {
   standing: '#22c55e',
 }
 
-export default function Dashboard() {
+interface DashboardProps {
+  theme: Theme
+  onToggleTheme: () => void
+}
+
+export default function Dashboard({ theme, onToggleTheme }: DashboardProps) {
   const navigate = useNavigate()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [displayNames, setDisplayNames] = useState<DisplayNames>({})
@@ -49,6 +56,9 @@ export default function Dashboard() {
 
   const classKeys = ['phone_use', 'talking', 'sleeping', 'standing']
   const totalDetections = stats ? Object.values(stats.total).reduce((a, b) => a + b, 0) : 0
+  const chartTheme = theme === 'light'
+    ? { legend: '#516079', tick: '#64748b', grid: '#dbe3ef', surface: '#ffffff' }
+    : { legend: '#94a3b8', tick: '#64748b', grid: '#1e293b', surface: '#111827' }
 
   const handleAnalyze = async () => {
     if (!stats || analysisLoading) return
@@ -74,7 +84,7 @@ export default function Dashboard() {
     datasets: [{
       data: classKeys.map(k => stats?.total[k] || 0),
       backgroundColor: classKeys.map(k => COLORS[k]),
-      borderColor: 'var(--bg-surface)',
+      borderColor: chartTheme.surface,
       borderWidth: 2,
     }],
   }
@@ -83,7 +93,7 @@ export default function Dashboard() {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: { position: 'bottom' as const, labels: { color: '#94a3b8', padding: 16, usePointStyle: true, pointStyleWidth: 10 } },
+      legend: { position: 'bottom' as const, labels: { color: chartTheme.legend, padding: 16, usePointStyle: true, pointStyleWidth: 10 } },
     },
     cutout: '65%',
   }
@@ -102,11 +112,11 @@ export default function Dashboard() {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: { position: 'bottom' as const, labels: { color: '#94a3b8', padding: 12, usePointStyle: true, pointStyleWidth: 10 } },
+      legend: { position: 'bottom' as const, labels: { color: chartTheme.legend, padding: 12, usePointStyle: true, pointStyleWidth: 10 } },
     },
     scales: {
-      x: { stacked: true, grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 11 } } },
-      y: { stacked: true, grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
+      x: { stacked: true, grid: { color: chartTheme.grid }, ticks: { color: chartTheme.tick, font: { size: 11 } } },
+      y: { stacked: true, grid: { color: chartTheme.grid }, ticks: { color: chartTheme.tick } },
     },
   }
 
@@ -139,11 +149,11 @@ export default function Dashboard() {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: { position: 'bottom' as const, labels: { color: '#94a3b8', padding: 12, usePointStyle: true, pointStyleWidth: 10 } },
+      legend: { position: 'bottom' as const, labels: { color: chartTheme.legend, padding: 12, usePointStyle: true, pointStyleWidth: 10 } },
     },
     scales: {
-      x: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 11 } } },
-      y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b' }, beginAtZero: true },
+      x: { grid: { color: chartTheme.grid }, ticks: { color: chartTheme.tick, font: { size: 11 } } },
+      y: { grid: { color: chartTheme.grid }, ticks: { color: chartTheme.tick }, beginAtZero: true },
     },
   }
 
@@ -166,9 +176,13 @@ export default function Dashboard() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
             返回
           </button>
-          <h1>监控大屏</h1>
+          <div className="dashboard-title">
+            <img src="/insightclass-mark.svg" alt="" width="30" height="30" draggable={false} />
+            <h1>监控大屏</h1>
+          </div>
         </div>
         <div className="dashboard-header-actions">
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           <button className="btn-ai" onClick={handleAnalyze} disabled={!stats || analysisLoading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="8"/></svg>
             AI 分析

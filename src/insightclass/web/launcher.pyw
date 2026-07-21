@@ -15,10 +15,14 @@ from pathlib import Path
 
 import sys
 
-if sys.platform == "win32" and getattr(sys, "frozen", False):
+if sys.platform == "win32":
     try:
         import ctypes
-        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "ygttygtt.InsightClass"
+        )
+        if getattr(sys, "frozen", False):
+            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
     except Exception:
         pass
 
@@ -37,6 +41,13 @@ def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path.cwd()
+
+
+def _resource_path(*parts: str) -> Path:
+    """Resolve read-only assets in both source and PyInstaller layouts."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS).joinpath(*parts)
+    return Path(__file__).resolve().parents[3].joinpath(*parts)
 
 
 def _config_dir() -> Path:
@@ -165,15 +176,18 @@ class TrayController:
     def start(self) -> None:
         try:
             import pystray
-            from PIL import Image, ImageDraw
+            from PIL import Image
         except ImportError:
             logger.warning("pystray is unavailable; tray behavior is disabled")
             return
 
-        image = Image.new("RGBA", (64, 64), "#6366f1")
-        draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((8, 8, 56, 56), radius=10, fill="#111827")
-        draw.text((16, 21), "IC", fill="#f8fafc")
+        icon_path = _resource_path("assets", "insightclass-tray.png")
+        try:
+            with Image.open(icon_path) as source:
+                image = source.convert("RGBA")
+        except OSError:
+            logger.exception("Unable to load tray icon from %s", icon_path)
+            return
         self._icon = pystray.Icon(
             "InsightClass",
             image,
@@ -194,11 +208,15 @@ class TrayController:
 
 
 _LOADING_HTML = """<!doctype html>
-<html><head><meta charset="utf-8"><style>
-body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0e1a;color:#e2e8f0;font:14px 'Segoe UI',system-ui,sans-serif}
-.loader{text-align:center}.spinner{width:40px;height:40px;margin:0 auto 20px;border:4px solid #334155;border-top-color:#6366f1;border-radius:50%;animation:spin 1s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}h2{margin:0 0 8px;font-weight:600}p{color:#94a3b8}
-</style></head><body><div class="loader"><div class="spinner"></div><h2>InsightClass</h2><p id="status">正在启动服务...</p></div>
+<html lang="zh-CN"><head><meta charset="utf-8"><style>
+:root{color-scheme:dark;--bg:#0a0e1a;--text:#e2e8f0;--muted:#94a3b8;--track:#334155}
+@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f5f7fb;--text:#172033;--muted:#64748b;--track:#dbe3ef}}
+body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:var(--bg);color:var(--text);font:14px 'Segoe UI',system-ui,sans-serif}
+.loader{text-align:center}.logo{width:66px;height:66px;margin-bottom:22px}.spinner{width:34px;height:34px;margin:0 auto 18px;border:3px solid var(--track);border-top-color:#6366f1;border-radius:50%;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}h2{margin:0 0 8px;font-size:20px;font-weight:650;letter-spacing:-.02em}p{color:var(--muted);margin:0}
+</style></head><body><div class="loader">
+<svg class="logo" viewBox="0 0 256 256" aria-label="InsightClass"><defs><linearGradient id="g" x1="12" y1="12" x2="244" y2="244" gradientUnits="userSpaceOnUse"><stop stop-color="#4f46e5"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs><rect x="12" y="12" width="232" height="232" rx="54" fill="url(#g)"/><path fill="#fff" fill-rule="evenodd" d="M57 128C92 74 164 74 199 128C164 182 92 182 57 128ZM77 128C103 98 153 98 179 128C153 158 103 158 77 128Z"/><circle cx="128" cy="128" r="25" fill="#fff"/><circle cx="128" cy="128" r="12" fill="#1e2959"/><circle cx="124" cy="124" r="3.5" fill="#fff"/></svg>
+<div class="spinner"></div><h2>InsightClass</h2><p id="status">正在启动服务...</p></div>
 <script>const messages=['正在启动服务...','正在加载推理引擎...','正在初始化模型...'];let index=0;setInterval(()=>{index=(index+1)%messages.length;document.getElementById('status').textContent=messages[index]},1800)</script>
 </body></html>"""
 
@@ -271,7 +289,10 @@ def main() -> None:
 
     threading.Thread(target=start_server, daemon=True, name="insightclass-server-start").start()
     try:
-        webview.start(debug=False)
+        webview.start(
+            debug=False,
+            icon=str(_resource_path("assets", "insightclass.ico")),
+        )
     finally:
         state["quitting"] = True
         server = state.get("server")

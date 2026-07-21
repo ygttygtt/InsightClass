@@ -9,6 +9,13 @@ LAUNCHER = Path(__file__).parents[1] / "src" / "insightclass" / "web" / "launche
 
 
 class LauncherTests(unittest.TestCase):
+    def test_brand_assets_are_resolvable_from_source_layout(self):
+        namespace = runpy.run_path(str(LAUNCHER))
+        resource_path = namespace["_resource_path"]
+        self.assertTrue(resource_path("assets", "insightclass.ico").is_file())
+        self.assertTrue(resource_path("assets", "insightclass-tray.png").is_file())
+        self.assertIn('class="logo"', namespace["_LOADING_HTML"])
+
     def test_activation_server_wakes_existing_instance(self):
         namespace = runpy.run_path(str(LAUNCHER))
         ActivationServer = namespace["ActivationServer"]

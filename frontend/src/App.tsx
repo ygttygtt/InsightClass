@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
+import ThemeToggle from './components/ThemeToggle'
+import { applyTheme, getInitialTheme, THEME_STORAGE_KEY, type Theme } from './theme'
 import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, FrameOut, LlmSettings, SystemStatus, RtspCredentials } from './types'
 import { addCamera, updateCamera, deleteCamera, detectFrame, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, getSystemStatus, testCameras, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel, getLlmSettings, setLlmSettings, testLlmConnection } from './api/client'
 
@@ -28,6 +30,8 @@ function detectionsAtFrame(frames: FrameOut[], target: number): DetectionOut[] {
 }
 
 function App() {
+  const [theme, setTheme] = useState<Theme>(getInitialTheme)
+
   // Camera state
   const [cameras, setCameras] = useState<Camera[]>([])
   const [selectedCamera, setSelectedCamera] = useState<Camera | null>(null)
@@ -117,6 +121,24 @@ function App() {
   const visibleDetections = source === 'video'
     ? detectionsAtFrame(videoFrames, videoFrameIndex)
     : detections
+
+  const toggleTheme = useCallback(() => {
+    setTheme(current => current === 'dark' ? 'light' : 'dark')
+  }, [])
+
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
+
+  useEffect(() => {
+    const syncTheme = (event: StorageEvent) => {
+      if (event.key === THEME_STORAGE_KEY && (event.newValue === 'dark' || event.newValue === 'light')) {
+        setTheme(event.newValue)
+      }
+    }
+    window.addEventListener('storage', syncTheme)
+    return () => window.removeEventListener('storage', syncTheme)
+  }, [])
 
   // Load cameras
   const loadCameras = useCallback(async () => {
@@ -881,30 +903,20 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard" element={<Dashboard theme={theme} onToggleTheme={toggleTheme} />} />
         <Route path="*" element={<>
       <div className="app">
         {/* Left sidebar */}
         <aside className="sidebar">
           <div className="brand">
             <div className="brand-icon">
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <rect width="32" height="32" rx="8" fill="url(#brand-grad)" />
-                <path d="M8 16C8 11.58 11.58 8 16 8s8 3.58 8 8-3.58 8-8 8" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" />
-                <circle cx="16" cy="16" r="3" fill="#fff" />
-                <path d="M16 10v-2M16 24v-2M10 16H8M24 16h-2" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" opacity=".6" />
-                <defs>
-                  <linearGradient id="brand-grad" x1="0" y1="0" x2="32" y2="32">
-                    <stop stopColor="#6366f1" />
-                    <stop offset="1" stopColor="#06b6d4" />
-                  </linearGradient>
-                </defs>
-              </svg>
+              <img src="/insightclass-mark.svg" alt="" width="38" height="38" draggable={false} />
             </div>
             <div className="brand-text">
               <span className="brand-name">InsightClass</span>
               <span className="brand-sub">深见课堂</span>
             </div>
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
           </div>
 
           {/* Top Controls */}

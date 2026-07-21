@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">InsightClass</title>
+  <desc id="desc">以观察之眼代表课堂视觉分析的 InsightClass 标志</desc>
+  <defs>
+    <linearGradient id="brand-gradient" x1="12" y1="12" x2="244" y2="244" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="232" height="232" rx="54" fill="url(#brand-gradient)"/>
+  <path fill="#fff" fill-rule="evenodd" d="M57 128C92 74 164 74 199 128C164 182 92 182 57 128ZM77 128C103 98 153 98 179 128C153 158 103 158 77 128Z"/>
+  <circle cx="128" cy="128" r="25" fill="#fff"/>
+  <circle cx="128" cy="128" r="12" fill="#1e2959"/>
+  <circle cx="124" cy="124" r="3.5" fill="#fff" fill-opacity=".94"/>
+</svg>

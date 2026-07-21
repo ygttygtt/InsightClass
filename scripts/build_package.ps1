@@ -40,6 +40,8 @@ try {
         "InsightClass.spec",
         "pyproject.toml",
         "src\insightclass\web\launcher.pyw",
+        "assets\insightclass.ico",
+        "assets\insightclass-tray.png",
         "configs\classes.yaml",
         "models\onnx\yolo11n_v2.onnx",
         "frontend\package-lock.json"

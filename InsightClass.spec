@@ -14,6 +14,8 @@ root = Path(SPECPATH)
 _datas = [
     (str(root / 'configs' / 'classes.yaml'), 'configs'),
     (str(root / 'frontend' / 'dist'), 'frontend/dist'),
+    (str(root / 'assets' / 'insightclass.ico'), 'assets'),
+    (str(root / 'assets' / 'insightclass-tray.png'), 'assets'),
 ]
 
 # Bundle ONNX models
@@ -94,7 +96,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    icon=None,
+    icon=str(root / 'assets' / 'insightclass.ico'),
 )
 
 coll = COLLECT(
