@@ -597,6 +597,17 @@ def _get_default_model() -> str:
     return cfg.get("default_model", "")
 
 
+def _find_startup_weights() -> str | None:
+    """Prefer a valid saved model, then fall back to model discovery."""
+    saved_model = _get_default_model()
+    if saved_model:
+        try:
+            return _validate_weights_path(saved_model)
+        except (FileNotFoundError, ValueError) as exc:
+            logger.warning("Ignoring invalid saved default model: %s", exc)
+    return _find_default_weights()
+
+
 def _get_rtsp_credentials() -> dict:
     """获取全局 RTSP 凭据（从 app.yaml 读取，支持 Web 界面设置）。"""
     cfg = _load_app_config()
@@ -937,7 +948,7 @@ def _draw_detection_outs(
 async def lifespan(app: FastAPI):
     # Start the server first; model loading happens in a daemon thread so the
     # loading screen and health endpoint are available immediately.
-    default_weights = _find_default_weights()
+    default_weights = _find_startup_weights()
     if default_weights:
         threading.Thread(
             target=_preload_model_worker,

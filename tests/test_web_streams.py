@@ -121,6 +121,23 @@ class CameraConfigurationTests(unittest.TestCase):
 
 
 class ModelLifecycleTests(unittest.TestCase):
+    def test_startup_weights_prefer_valid_saved_model(self):
+        with patch.object(server, "_get_default_model", return_value="saved.onnx"), patch.object(
+            server, "_validate_weights_path", return_value="validated.onnx"
+        ), patch.object(server, "_find_default_weights") as discover:
+            result = server._find_startup_weights()
+
+        self.assertEqual(result, "validated.onnx")
+        discover.assert_not_called()
+
+    def test_startup_weights_fall_back_when_saved_model_is_stale(self):
+        with patch.object(server, "_get_default_model", return_value="missing.onnx"), patch.object(
+            server, "_validate_weights_path", side_effect=FileNotFoundError("missing")
+        ), patch.object(server, "_find_default_weights", return_value="bundled.onnx"):
+            result = server._find_startup_weights()
+
+        self.assertEqual(result, "bundled.onnx")
+
     def test_system_status_uses_frontend_model_contract(self):
         with patch.object(server, "_get_model_state", return_value={
             "status": "ready", "model": "model.onnx", "error": "",
