@@ -1,149 +1,174 @@
-# 项目指导文档（开发者向）
+# 项目指南（开发者向）
 
-## 1. 项目目标
+> 适用于 InsightClass `1.1.x`，最后更新：2026-07-21。
 
-InsightClass 用于教室前方摄像头场景下的学生行为检测，首期目标建立可复用、可比较、可扩展的基线闭环：
+## 1. 项目定位
 
-- 从原始视频整理成统一数据集
-- 以单帧检测方式识别 `玩手机 / 交谈 / 打瞌睡`
-- 模型后端与公共流程解耦，后续可替换 YOLO、RT-DETR、MMDetection 等
+InsightClass 是课堂行为视觉分析应用，目标是提供从数据采集、标注、训练、评估
+到桌面端实时推理的完整闭环。当前稳定识别 `phone_use`、`talking`、
+`sleeping`、`standing` 四类行为。
 
-## 2. 首期范围与非范围
+当前产品范围：
 
-### 首期范围
+- RTSP 和电脑摄像头实时监看与检测
+- 图片、视频和批量视频离线检测
+- 摄像头管理、在线状态、趋势统计和报表
+- OpenAI 兼容大模型对统计结果进行总结
+- ONNX Runtime 便携版推理
+- Ultralytics 模型训练、验证、导出和实验比较
+- Windows WebView 窗口、系统托盘和单实例生命周期
 
-- 视频级数据切分
-- 抽帧
-- YOLO 数据集格式
-- Ultralytics 基线训练
-- 单视频离线推理
-- 统一实验记录
+当前不提供：
 
-### 非首期范围
+- 用户登录、租户隔离和细粒度权限
+- 持久化数据库与跨设备统计同步
+- 基于身份的人脸识别或学生个体追踪
+- 可直接用于教学处分的自动决策
 
-- 实时摄像头接入
-- 在线服务部署
-- 时序行为识别
-- 音视频多模态融合
+## 2. 设计原则
 
-## 3. 环境职责分工
+### 稳定类别 ID
 
-| 环境 | 职责 |
-|------|------|
-| 本机 (`<your-env-name>`) | 视频整理、数据集构建、质检、离线推理、可视化、实验汇总 |
-| 远端 GPU (Colab/Kaggle) | 模型训练、验证、权重导出 |
+训练和 API 使用英文 ID，中文仅用于展示：
 
-## 4. 目录规范
-
-```text
-InsightClass/
-├─ configs/
-├─ docs/
-├─ src/insightclass/
-├─ tests/
-├─ data/
-│  ├─ raw_videos/       # 原始视频 & RTSP 录制输出
-│  └─ processed/        # 按版本组织的数据集
-├─ experiments/         # 训练产物
-└─ reports/             # 质检报告、实验汇总
-```
-
-## 5. 类别命名规范
-
-训练类别使用英文稳定 ID，中文展示名通过 `configs/classes.yaml` 维护：
-
-| 训练ID | 中文 |
-|--------|------|
+| ID | 中文 |
+|---|---|
 | `phone_use` | 玩手机 |
 | `talking` | 交谈 |
 | `sleeping` | 打瞌睡 |
+| `standing` | 站立 |
 
-扩类时只新增英文 ID 和展示名，不修改已有类别 ID。如需重命名，应视为新数据版本。
+`configs/classes.yaml` 是类别定义的唯一来源。重命名或调整顺序会改变模型输出
+语义，必须作为数据集和模型版本变更处理。
 
-## 6. 数据流水线设计要点
+### 视频级数据划分
 
-### 视频级切分（防泄漏）
+必须先按原始视频划分 train/val/test，再抽帧。同一课堂片段或同源连续视频不能
+跨集合，否则相邻帧会造成数据泄漏并虚高评估指标。
 
-必须先按视频切分 train/val/test，再抽帧。同一视频不能同时出现在多个 split。如果一个完整课时被拆成多个短视频，这些视频应视为一个泄漏风险组。
+### 后端分工
 
-### 抽帧策略
+- `UltralyticsBackend`：开发和训练环境使用，支持 `.pt` 训练、验证和推理。
+- `OnnxBackend`：Windows 发行版默认使用，避免携带 PyTorch/Ultralytics。
+- `build_backend()`：通过名称延迟加载后端，保持核心工具依赖轻量。
 
-首期默认 1 fps，可按课堂事件密度调整。保留 `video_id / timestamp / frame_index` 元信息，对应 `frame_index.csv`。
+新增后端时，应实现 `DetectorBackend` 抽象接口并在 `backends/factory.py` 注册，
+不得让数据、评估和 Web 层直接依赖具体框架。
 
-### 标注原则
+### 同源 Web 架构
 
-- 只标三类异常行为学生（`phone_use`, `talking`, `sleeping`）
-- 正常听课学生不标，作为负样本背景
-- 首期统一采用"行为主体框"（以上半身为主，不是只框手机或脸）
+React 生产文件由 FastAPI 托管，前端使用 `/api` 相对路径访问后端。桌面版只在
+`127.0.0.1` 启动服务，并通过 pywebview 显示同一 Web 应用。开发模式的 Vite
+代理指向本地 FastAPI 服务。
 
-详细规则见 [05_标注规范.md](05_标注规范.md)。
+## 3. 目录与所有权
 
-## 7. 后端扩展（策略 + 工厂模式）
-
-后端扩展点在：
-
-- `src/insightclass/backends/base.py` — `DetectorBackend` ABC
-- `src/insightclass/backends/factory.py` — `build_backend(name)` 注册表
-
-当前只注册了 `"ultralytics"`。新增后端步骤：
-
-1. 实现 `DetectorBackend` 的 5 个抽象方法（`train`, `validate`, `predict_images_or_video`, `load_predictions_as_sv_detections`, `export_artifacts`）
-2. 在 `factory.py` 中注册
-3. 数据准备、质检、可视化、实验汇总代码不需任何改动
-
-## 8. 实验管理
-
-### 命名规范
-
-`{stage}_{backend}_{weights}_{dataVersion}_{imgsz}_{epochs}_{tag}`
-
-### 每次实验记录的内容
-
-- 实验ID、时间、模型权重、数据版本、类别表
-- 训练参数、核心指标（mAP50-95、各类别召回/精确）
-- 失败现象、主观观察、是否进入下一轮
-
-### 比较实验
-
-```bash
-python -m insightclass compare-experiments \
-  --experiments-root experiments \
-  --output reports/experiment_summary.csv
+```text
+configs/                  类别、训练模板和本地运行配置
+data/                     原始视频与处理数据（不进入 Git）
+docs/                     面向用户和开发者的正式文档
+experiments/              训练产物（不进入 Git）
+frontend/                 React、类型和 API 客户端
+models/                   可跟踪的预训练与 ONNX 模型
+scripts/                  录制、诊断、训练和打包工具
+src/insightclass/
+  backends/               推理/训练策略实现
+  data/                   Manifest、抽帧与 YOLO 数据集工具
+  evaluation/             实验记录与汇总
+  utils/                  配置、路径和序列化工具
+  visualization/          图片/视频标注渲染
+  web/                    FastAPI、模型缓存、大模型客户端和桌面启动器
+tests/                    Python 自动化测试
 ```
 
-## 9. 新增行为类别
+运行时可写文件位于应用目录：
 
-1. 更新 `configs/classes.yaml`
-2. 更新 `docs/05_标注规范.md`
-3. 对新类别补充标注
-4. 重新运行质检
-5. 重新生成 `yolo_dataset.yaml`
-6. 启动新一轮实验
+- `configs/app.yaml`：默认模型、RTSP 凭据和大模型设置
+- `configs/cameras.yaml`：用户摄像头列表
+- `experiments/`：用户实验数据
 
-## 10. 常见问题
+以上文件均不应提交，也不应打入包含真实配置的 Release。
 
-### Q1: 为什么不先做 person + behavior？
+## 4. 关键数据流
 
-首期目标是快速验证数据、标签体系和基线可学性。person + behavior 会增加标注成本和代码复杂度，首轮不划算。
+### 实时检测
 
-### Q2: 什么时候应该升级到二阶段或时序方案？
+```text
+RTSP/Webcam -> 最新帧 -> /api/detect/* -> 模型推理 -> 检测框
+                                             |
+                                             +-> Dashboard 内存统计
+```
 
-- `talking` 长期误检高、召回低
-- `sleeping` 和"低头写字"分不开
-- 需要按每个学生稳定统计全班状态
-- 需要持续时间判断而非单帧快照
+每台 RTSP 摄像头拥有独立 `RtspStreamManager`。停止或切换摄像头时必须释放
+`VideoCapture`；Webcam 切换来源时必须停止浏览器 `MediaStreamTrack`。
 
-### Q3: 本机没有 GPU，为什么保留本机推理？
+### 视频检测
 
-本机承担结果回放、标注质检、小规模验证、实验分析，CPU 即可完成。
+服务端按视频帧生成带 `frame_index` 的结果，前端根据播放器当前时间换算帧号并
+选择最近且不晚于当前帧的检测结果。不得按网络返回时机直接覆盖检测框。
 
-## 参考文档
+### 大模型分析
 
-| 文档 | 面向 | 内容 |
-|------|------|------|
-| [01_快速上手.md](01_快速上手.md) | 使用者 | 环境搭建与快速体验 |
-| [02_录制操作手册.md](02_录制操作手册.md) | 录制者 | RTSP 多路录制 |
-| [03_视频处理手册.md](03_视频处理手册.md) | 数据处理 | 录制视频抽帧 |
-| [04_X-AnyLabeling操作手册.md](04_X-AnyLabeling操作手册.md) | 标注者 | 标注工具使用 |
-| [05_标注规范.md](05_标注规范.md) | 标注者 | 正反例定义、框选规则 |
-| [06_实验手册.md](06_实验手册.md) | 实验者 | 实验设计与判断标准 |
+Dashboard 将聚合统计和 24 小时趋势作为 JSON 上下文发送给
+`/api/llm/analyze`。服务端使用固定系统约束，要求模型只依据提供的数据回答。
+大模型不直接读取摄像头视频，也不参与检测框生成。
+
+## 5. 安全边界
+
+- 桌面后端只绑定 `127.0.0.1`；CLI 的 `0.0.0.0` 模式需要部署者自行加访问控制。
+- RTSP 密码和 API Key 不通过 GET 返回明文，只返回是否已配置和尾部掩码。
+- 摄像头、实验、模型和静态资源路径必须限制在允许目录内。
+- 上传接口必须同时校验扩展名、解码结果、文件大小、像素数和批量数量。
+- 日志不得打印含用户名/密码的完整 RTSP URL。
+- Release 不得包含 `configs/app.yaml` 的真实内容、内部 IP、数据集或课堂视频。
+
+## 6. 开发流程
+
+安装开发依赖：
+
+```powershell
+python -m pip install -e ".[web,dev]"
+Push-Location frontend
+npm ci
+Pop-Location
+```
+
+质量门槛：
+
+```powershell
+python -m pytest -q
+ruff check src scripts tests
+Push-Location frontend
+npm run build
+Pop-Location
+```
+
+涉及依赖或发行时增加 `npm audit --omit=dev --audit-level=high` 和 Windows 包冒烟
+测试。测试规模应随风险扩大：共享 API、文件安全、进程生命周期和跨模块契约必须
+补自动化测试。
+
+## 7. 提交与版本
+
+维护分支为 `main`，小改动验证成功后立即提交并推送。提交格式使用英文类型和
+中文摘要，例如：
+
+```text
+fix: 修复 RTSP 停止后设备未释放
+docs: 同步前端功能与 API 文档
+build: 更新 Windows 便携版构建流程
+```
+
+Python 包、前端包、Git 标签和 Release 使用同一版本号。发布前更新
+`CHANGELOG.md`，构建全新 ZIP，并验证附件校验值和 Release 指向的提交。
+
+## 8. 相关文档
+
+| 文档 | 适用场景 |
+|---|---|
+| [快速上手](01_快速上手.md) | 安装、体验与完整数据闭环 |
+| [录制操作手册](02_录制操作手册.md) | 安全采集 RTSP 视频 |
+| [标注规范](05_标注规范.md) | 四类行为的统一标签口径 |
+| [实验手册](06_实验手册.md) | 可复现训练和模型比较 |
+| [前端使用手册](08_前端使用手册.md) | Web/桌面操作与故障排查 |
+| [打包与发行](09_打包与发行.md) | Windows Release 流程 |
+| [整体架构](项目整体架构文档.md) | 模块、接口和运行时生命周期 |
