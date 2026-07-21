@@ -67,6 +67,7 @@ class OpenAICompatibleClientTests(unittest.TestCase):
         sent = json.loads(request.data.decode("utf-8"))
         self.assertEqual(request.full_url, "https://example.com/v1/chat/completions")
         self.assertEqual(request.get_header("Authorization"), "Bearer secret")
+        self.assertEqual(request.get_header("User-agent"), "InsightClass/1.1.0")
         self.assertEqual(sent["model"], "demo-model")
         self.assertEqual(result["content"], "Analysis complete.")
 

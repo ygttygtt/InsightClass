@@ -68,7 +68,7 @@ class OpenAICompatibleClient:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "InsightClass/0.1",
+            "User-Agent": "InsightClass/1.1.0",
         }
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
