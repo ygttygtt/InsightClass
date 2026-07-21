@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/insightclass-mark.svg" width="96" height="96" alt="InsightClass 深见课堂标志">
+</p>
+
 # InsightClass 深见课堂
 
 [![Release](https://img.shields.io/github/v/release/ygttygtt/InsightClass?display_name=tag)](https://github.com/ygttygtt/InsightClass/releases/latest)
@@ -27,6 +31,8 @@ InsightClass 是面向课堂场景的开源视觉分析应用，提供 RTSP/电�
 - ONNX Runtime 发行版推理，以及开发环境中的 Ultralytics 训练/验证
 - OpenAI Chat Completions 兼容配置、连接测试和课堂统计分析
 - Windows WebView 独立窗口、快速加载页、系统托盘保活和单实例唤醒
+- 深色/浅色主题、系统主题首次跟随和跨启动偏好保存
+- 统一的 EXE、任务栏、标题栏、托盘及 Web 品牌图标
 - 上传大小/类型限制、路径边界校验和凭据脱敏
 
 ## 获取应用
@@ -36,11 +42,12 @@ Windows 用户可从 [GitHub Releases](https://github.com/ygttygtt/InsightClass/
 
 1. 将 ZIP 完整解压到可写目录。
 2. 双击 `InsightClass.exe`。
-3. 首次使用时，在设置中填写 RTSP 凭据；应用不内置任何摄像头密码。
+3. 可右键 EXE 选择“发送到 -> 桌面快捷方式”，不要把 EXE 单独移出发行目录。
+4. 首次使用时，在设置中填写 RTSP 凭据；应用不内置任何摄像头密码。
 
 运行要求为 Windows 10/11 和 Microsoft Edge WebView2 Runtime。关闭主窗口只会
-隐藏到系统托盘；从托盘选择“退出”才会结束后端。不要只复制 EXE，`_internal/`
-是必需的运行资源。
+隐藏到系统托盘；从托盘选择“退出”才会结束后端。发行版采用 onedir 目录模式，
+启动时无需先把依赖解压到临时目录；`_internal/` 是必需的运行资源。
 
 ## 从源码运行
 
@@ -118,6 +125,7 @@ pywebview 桌面窗口 + pystray 系统托盘
 ```text
 InsightClass/
 |-- configs/                 # 类别、训练模板和本地运行配置
+|-- assets/                  # Logo、ICO、托盘图和 Windows 版本信息
 |-- docs/                    # 使用、训练、架构与发行文档
 |-- frontend/                # React + TypeScript 前端
 |-- models/onnx/             # 发行版内置 ONNX 模型
@@ -148,6 +156,9 @@ Pop-Location
 .\scripts\build_package.ps1
 # 已安装依赖时：.\scripts\build_package.ps1 -SkipDeps
 ```
+
+品牌资产由 `python scripts/generate_brand_assets.py` 从确定性几何统一生成，不要只
+手工替换某一个 PNG/ICO，否则桌面与 Web 图标会失去一致性。
 
 完整发布检查见 [打包与发行](docs/09_打包与发行.md)。
 

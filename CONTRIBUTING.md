@@ -54,6 +54,16 @@ Pop-Location
 涉及依赖或发行时还应运行 `npm audit --omit=dev --audit-level=high` 和完整 Windows
 打包冒烟测试。涉及摄像头时应覆盖连接、失败、停止、重连和资源释放。
 
+## UI 与品牌资产
+
+- 深色和浅色主题必须同时检查，不能用只适合单一背景的硬编码文字/网格颜色。
+- 修改 Logo 时编辑 `scripts/generate_brand_assets.py`，运行脚本后一起提交 `assets/`
+  和 `frontend/public/` 的全部生成结果。
+- `assets/insightclass.ico` 必须保留 16/24/32/48/64/128/256 七档尺寸；发行前检查
+  EXE、任务栏、标题栏、托盘和 favicon 的实际显示。
+- 调整发行版本时同步 Python、前端、lockfile 和 Windows 版本资源，并运行版本一致
+  性测试。
+
 ## Pull Request
 
 PR 描述应包括：

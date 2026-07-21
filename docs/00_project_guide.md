@@ -1,6 +1,6 @@
 # 项目指南（开发者向）
 
-> 适用于 InsightClass `1.1.x`，最后更新：2026-07-21。
+> 适用于 InsightClass `1.2.x`，最后更新：2026-07-21。
 
 ## 1. 项目定位
 
@@ -17,6 +17,7 @@ InsightClass 是课堂行为视觉分析应用，目标是提供从数据采集�
 - ONNX Runtime 便携版推理
 - Ultralytics 模型训练、验证、导出和实验比较
 - Windows WebView 窗口、系统托盘和单实例生命周期
+- 深色/浅色主题、统一品牌图标和 WebView 本地偏好缓存
 
 当前不提供：
 
@@ -65,6 +66,7 @@ React 生产文件由 FastAPI 托管，前端使用 `/api` 相对路径访问后
 
 ```text
 configs/                  类别、训练模板和本地运行配置
+assets/                   品牌母版、Windows ICO/版本资源和托盘图
 data/                     原始视频与处理数据（不进入 Git）
 docs/                     面向用户和开发者的正式文档
 experiments/              训练产物（不进入 Git）
@@ -88,6 +90,8 @@ tests/                    Python 自动化测试
 - `experiments/`：用户实验数据
 
 以上文件均不应提交，也不应打入包含真实配置的 Release。
+桌面 WebView 的主题和浏览器缓存位于 `configs/webview/`，同样属于可删除、不可提交
+的本机运行数据。
 
 ## 4. 关键数据流
 
