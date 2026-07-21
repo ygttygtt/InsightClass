@@ -1,128 +1,182 @@
 # InsightClass 深见课堂
 
-AI 赋能的智慧校园视觉中台，通过高精度行为特征检索重塑教与学的数字化洞察。
+[![Release](https://img.shields.io/github/v/release/ygttygtt/InsightClass?display_name=tag)](https://github.com/ygttygtt/InsightClass/releases/latest)
+[![License](https://img.shields.io/github/license/ygttygtt/InsightClass)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![Platform](https://img.shields.io/badge/Desktop-Windows%2010%2F11-0078D4?logo=windows)](docs/09_打包与发行.md)
 
-检测四类课堂行为：`phone_use`（玩手机）、`talking`（交谈）、`sleeping`（打瞌睡）、`standing`（站立）。
+InsightClass 是面向课堂场景的开源视觉分析应用，提供 RTSP/电脑摄像头实时检测、
+图片与视频分析、监控统计和 OpenAI 兼容大模型总结能力。Windows 便携版将 React
+前端、FastAPI 后端、ONNX 推理和桌面窗口打包在一起，无需单独安装 Python。
 
-## 快速开始
+当前识别四类课堂行为：
 
-```bash
-# 1. 克隆项目
-git clone <repo-url>
-cd InsightClass
-
-# 2. 安装依赖（含 Web 前端）
-pip install -e .[ultralytics,web]
-
-# 3. 启动 Web 服务
-insightclass serve --host 0.0.0.0 --port 8080
-# 浏览器打开 http://localhost:8080
-```
-
-> **端口说明**：默认端口 8000。若 8000 被占用（如海康摄像头后台），改用 `--port 8080`。
->
-> **HTTPS 模式**：局域网摄像头需要 HTTPS 才能使用浏览器摄像头，加 `--https` 参数自动生成自签名证书。
->
-> **摄像头配置**：`configs/cameras.yaml` 和 `configs/app.yaml` 由 Web 界面自动创建和管理，无需手动配置。
-
-### Windows 桌面便携版
-
-```powershell
-# 构建前端、后端和 Windows 桌面窗口，并生成 ZIP
-.\scripts\build_package.ps1
-
-# 已安装依赖时可跳过 pip 安装
-.\scripts\build_package.ps1 -SkipDeps
-```
-
-构建结果为 `dist/InsightClass-Web/InsightClass.exe` 和
-`InsightClass-Web.zip`。程序启动时会先显示加载界面，随后在同一窗口打开
-Web 应用；关闭窗口仅隐藏到系统托盘，后端会继续运行。双击托盘图标或再次
-运行 EXE 可唤醒窗口，使用托盘菜单中的“退出”才会结束后端。
-
-运行桌面版需要 Windows 10/11 和 Microsoft Edge WebView2 Runtime（多数系统已
-预装）。完整构建说明见 [09 打包与发行](docs/09_打包与发行.md)。
+| 类别 ID | 展示名称 |
+|---|---|
+| `phone_use` | 玩手机 |
+| `talking` | 交谈 |
+| `sleeping` | 打瞌睡 |
+| `standing` | 站立 |
 
 ## 功能
 
-- **RTSP 实时监控**：连接教室摄像头，实时查看画面（MJPEG 流）
-- **目标检测**：在监控画面上叠加 AI 检测框，识别玩手机/交谈/打瞌睡/站立
-- **摄像头检测**：从 RTSP 摄像头抓帧实时检测
-- **图片/视频检测**：上传图片或视频文件进行离线分析
-- **批量视频检测**：同时上传多个视频，后台异步处理，支持导出 CSV/JSON
-- **摄像头管理**：Web 界面添加/删除/编辑/测试摄像头连通性
-- **模型管理**：支持多模型切换，可设默认模型
-- **Dashboard 统计**：各摄像头检测数据统计，支持导出报告
-- **大模型分析**：支持 OpenAI 兼容的 Chat Completions API，可在设置中配置服务地址、模型和 API Key
-- **桌面应用**：无控制台窗口，支持加载页、系统托盘保活和单实例唤醒
+- RTSP 摄像头监看、连接状态、断线重连和实时检测框
+- 电脑摄像头实时检测，并在停止时释放媒体设备
+- 图片、单视频和多视频批量检测，支持结果回放与 CSV/JSON 导出
+- 真实摄像头在线状态、行为计数、24 小时内存趋势和报表导出
+- ONNX Runtime 发行版推理，以及开发环境中的 Ultralytics 训练/验证
+- OpenAI Chat Completions 兼容配置、连接测试和课堂统计分析
+- Windows WebView 独立窗口、快速加载页、系统托盘保活和单实例唤醒
+- 上传大小/类型限制、路径边界校验和凭据脱敏
 
-## CLI 命令
+## 获取应用
 
-```bash
-# 数据处理
-insightclass create-manifest --config ... --output ...   # 创建数据集清单
-insightclass extract-frames --manifest ... --fps 1.0     # 视频抽帧
-insightclass inspect-yolo --dataset-root ... --output .. # 检查标注质量
-insightclass write-yolo-yaml --dataset-root ... --output # 生成训练配置
+Windows 用户可从 [GitHub Releases](https://github.com/ygttygtt/InsightClass/releases/latest)
+下载 `InsightClass-Web.zip`：
 
-# 训练推理
-insightclass train --config configs/training.yaml        # 训练模型
-insightclass validate --config ...                       # 验证模型
-insightclass predict --config configs/inference.yaml     # 推理预测
-insightclass render-first-frame --config ...             # 可视化第一帧
+1. 将 ZIP 完整解压到可写目录。
+2. 双击 `InsightClass.exe`。
+3. 首次使用时，在设置中填写 RTSP 凭据；应用不内置任何摄像头密码。
 
-# 实验管理
-insightclass compare-experiments --experiments-root experiments --output reports/summary.csv
+运行要求为 Windows 10/11 和 Microsoft Edge WebView2 Runtime。关闭主窗口只会
+隐藏到系统托盘；从托盘选择“退出”才会结束后端。不要只复制 EXE，`_internal/`
+是必需的运行资源。
 
-# Web 服务
-insightclass serve --host 0.0.0.0 --port 8000            # 主服务（摄像头+Dashboard）
-insightclass serve --host 0.0.0.0 --port 8000 --https    # HTTPS 模式
+## 从源码运行
+
+### Web 应用
+
+```powershell
+git clone https://github.com/ygttygtt/InsightClass.git
+Set-Location InsightClass
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[web]"
+
+Push-Location frontend
+npm ci
+npm run build
+Pop-Location
+
+insightclass serve --host 127.0.0.1 --port 8000
 ```
+
+浏览器访问 `http://127.0.0.1:8000`。如需局域网访问，可使用 `--host 0.0.0.0`；
+非 localhost 环境使用浏览器摄像头时需要 HTTPS，可增加 `--https` 生成本地自签名
+证书。
+
+### 训练与离线推理
+
+```powershell
+python -m pip install -e ".[ultralytics,web]"
+
+insightclass train --config configs/training.ultralytics.example.yaml
+insightclass validate --config configs/training.ultralytics.example.yaml
+insightclass predict --config configs/inference.ultralytics.example.yaml
+```
+
+数据准备、标注和训练流程见 [快速上手](docs/01_快速上手.md)。
+
+## 大模型配置
+
+在“设置 -> 大模型分析”中填写兼容 OpenAI Chat Completions 的 Base URL、模型名、
+API Key 和超时，并使用“测试连接”验证。配置成功后，可在监控大屏点击“AI 分析”
+对当前统计和 24 小时趋势生成总结。
+
+也可使用环境变量覆盖本机配置：
+
+```powershell
+$env:OPENAI_BASE_URL = "https://api.openai.com/v1"
+$env:OPENAI_MODEL = "your-model"
+$env:OPENAI_API_KEY = "your-api-key"
+```
+
+API Key 和 RTSP 密码保存在应用目录的 `configs/app.yaml`。该文件已被 Git 忽略，
+设置接口只向前端返回脱敏状态。请勿把真实密钥提交到仓库或发布附件。
+
+## 架构
+
+```text
+React + TypeScript
+        |
+        | HTTP / MJPEG
+        v
+FastAPI API + 静态资源托管
+        |
+        +-- ONNX Runtime / Ultralytics
+        +-- OpenCV RTSP 与媒体处理
+        +-- OpenAI 兼容分析客户端
+        |
+pywebview 桌面窗口 + pystray 系统托盘
+```
+
+详细模块、配置和 API 契约见 [项目整体架构文档](docs/项目整体架构文档.md)。
 
 ## 项目结构
 
-```
+```text
 InsightClass/
-├── configs/              # 配置文件
-│   ├── classes.yaml      #   类别定义（4 种行为）
-│   ├── cameras.yaml      #   摄像头配置（运行时生成）
-│   └── app.yaml          #   应用配置（运行时生成）
-├── data/                 # 数据集（gitignored）
-├── docs/                 # 项目文档
-├── experiments/          # 训练产物（gitignored）
-├── scripts/              # 独立工具脚本
-└── src/insightclass/     # 源代码
-    ├── backends/         #   可替换检测后端（Strategy + Factory）
-    ├── data/             #   数据处理模块
-    ├── evaluation/       #   实验管理模块
-    ├── visualization/    #   可视化模块
-    ├── web/              #   Web 服务模块
-    │   ├── server.py     #     FastAPI REST API（合并了旧 demo/experiment_viewer）
-    │   ├── launcher.pyw  #     Windows 桌面启动器（WebView + 系统托盘）
-    │   ├── model_cache.py#     模型缓存
-    │   └── schemas.py    #     API 响应数据结构（Pydantic）
-    └── utils/            #   工具函数
-├── frontend/             # React 前端（TypeScript + Vite）
-│   ├── src/
-│   │   ├── pages/        #   Detection, Dashboard, Experiments
-│   │   ├── components/   #   UI 组件
-│   │   ├── api/          #   API 客户端
-│   │   └── types/        #   TypeScript 类型
-│   └── dist/             #   构建产物（gitignored）
+|-- configs/                 # 类别、训练模板和本地运行配置
+|-- docs/                    # 使用、训练、架构与发行文档
+|-- frontend/                # React + TypeScript 前端
+|-- models/onnx/             # 发行版内置 ONNX 模型
+|-- scripts/                 # RTSP、训练和打包工具
+|-- src/insightclass/        # Python 包、推理后端和 Web 服务
+|-- tests/                   # Python 自动化测试
+|-- InsightClass.spec        # PyInstaller 配置
+`-- pyproject.toml           # Python 包和依赖定义
 ```
+
+## 开发与验证
+
+```powershell
+python -m pip install -e ".[web,dev]"
+python -m pytest -q
+ruff check src scripts tests
+
+Push-Location frontend
+npm ci --no-audit --no-fund
+npm audit --omit=dev --audit-level=high
+npm run build
+Pop-Location
+```
+
+构建 Windows 便携版：
+
+```powershell
+.\scripts\build_package.ps1
+# 已安装依赖时：.\scripts\build_package.ps1 -SkipDeps
+```
+
+完整发布检查见 [打包与发行](docs/09_打包与发行.md)。
 
 ## 文档
 
-| 文档 | 用途 |
-|------|------|
-| [00 项目指南](docs/00_project_guide.md) | 架构与设计决策 |
-| [01 快速上手](docs/01_快速上手.md) | 数据→标注→训练→推理全流程 |
-| [02 录制操作手册](docs/02_录制操作手册.md) | 摄像头录制指南 |
-| [03 视频处理手册](docs/03_视频处理手册.md) | 视频抽帧流程 |
-| [04 标注工具手册](docs/04_X-AnyLabeling操作手册.md) | 标注工具使用指南 |
-| [05 标注规范](docs/05_标注规范.md) | 标准化标注规则 |
-| [06 实验手册](docs/06_实验手册.md) | 实验设计指南 |
-| [07 服务器训练手册](docs/07_服务器训练手册.md) | GPU 服务器训练流程 |
-| [08 前端使用手册](docs/08_前端使用手册.md) | Web 前端功能说明 |
-| [09 打包与发行](docs/09_打包与发行.md) | Windows 桌面便携版构建、运行与发布检查 |
-| [项目整体架构文档](docs/项目整体架构文档.md) | 完整架构详解 |
+| 文档 | 内容 |
+|---|---|
+| [项目指南](docs/00_project_guide.md) | 开发范围、设计约束与质量门槛 |
+| [快速上手](docs/01_快速上手.md) | 安装、数据、训练、推理和 Web 使用 |
+| [录制操作手册](docs/02_录制操作手册.md) | 安全配置并录制 RTSP 摄像头 |
+| [视频处理手册](docs/03_视频处理手册.md) | 视频切分、抽帧与元数据 |
+| [X-AnyLabeling 手册](docs/04_X-AnyLabeling操作手册.md) | 标注工具与辅助模型配置 |
+| [标注规范](docs/05_标注规范.md) | 四类行为定义和质检规则 |
+| [实验手册](docs/06_实验手册.md) | 可复现实验设计与比较 |
+| [服务器训练手册](docs/07_服务器训练手册.md) | GPU 服务器训练流程 |
+| [前端使用手册](docs/08_前端使用手册.md) | 检测、监控台、设置和故障排查 |
+| [打包与发行](docs/09_打包与发行.md) | Windows 便携版构建与发布 |
+| [整体架构](docs/项目整体架构文档.md) | 系统组件、数据流、API 和安全边界 |
+
+## 贡献与安全
+
+提交 Issue 或 Pull Request 前请阅读 [贡献指南](CONTRIBUTING.md)。安全问题不要公开
+披露，请按 [安全策略](SECURITY.md) 提交私密报告。版本变化记录在
+[CHANGELOG.md](CHANGELOG.md)。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。你可以在保留版权和许可声明的前提下使用、
+复制、修改和分发本软件。
+
+课堂视频可能包含个人信息。部署者应遵守所在地关于告知、授权、数据最小化、
+保存期限和访问控制的法律及组织制度；检测或大模型输出不能替代人工判断。
