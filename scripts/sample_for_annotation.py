@@ -36,7 +36,7 @@ def main():
     # 按来源视频统计
     video_counts = Counter(img.name.rsplit("_f", 1)[0] for img in sampled)
     print(f"Copied {len(sampled)} images to {output_dir}")
-    print(f"\nPer video breakdown:")
+    print("\nPer video breakdown:")
     for video, count in sorted(video_counts.items()):
         print(f"  {video}: {count} frames")
 

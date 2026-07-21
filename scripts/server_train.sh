@@ -38,10 +38,10 @@ if [ ! -f "$CONFIG" ]; then
 fi
 
 # 检查模型权重
-WEIGHTS_FILE="${MODEL}.pt"
+WEIGHTS_FILE="models/${MODEL}.pt"
 if [ ! -f "$WEIGHTS_FILE" ]; then
     echo "[错误] 模型权重不存在: $WEIGHTS_FILE"
-    echo "请确保 yolo11n.pt 和 yolo26n.pt 在项目根目录"
+    echo "请确保模型权重位于 models/ 目录"
     exit 1
 fi
 

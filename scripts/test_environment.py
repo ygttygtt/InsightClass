@@ -15,12 +15,12 @@ def test_environment():
             print(f"CUDA 版本: {torch.version.cuda}")
             print(f"GPU 设备: {torch.cuda.get_device_name(0)}")
             print(f"GPU 数量: {torch.cuda.device_count()}")
-            x = torch.rand(3, 3).cuda()
-            print(f"GPU 张量计算测试: 通过")
+            torch.rand(3, 3).cuda()
+            print("GPU 张量计算测试: 通过")
         else:
             print("当前使用 CPU 模式")
-            x = torch.rand(3, 3)
-            print(f"CPU 张量计算测试: 通过")
+            torch.rand(3, 3)
+            print("CPU 张量计算测试: 通过")
     except ImportError:
         print("\nPyTorch: 未安装")
 

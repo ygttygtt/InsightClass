@@ -1,7 +1,7 @@
 backend: ultralytics
 task: detect
 data_config_path: data/processed/classroom_behavior_v2/dataset.yaml
-model_weights: yolo11n.pt
+model_weights: models/yolo11n.pt
 image_size: 960
 epochs: 80
 batch_size: 16
