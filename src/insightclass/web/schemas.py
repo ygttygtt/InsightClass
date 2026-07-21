@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DetectionOut(BaseModel):
@@ -43,14 +43,14 @@ class ExperimentSummary(BaseModel):
 class BatchDetectionResult(BaseModel):
     filename: str
     status: str  # pending / processing / done / error
-    frames: list[FrameOut] = []
+    frames: list[FrameOut] = Field(default_factory=list)
     frame_count: int = 0
     fps: float = 0
     video_width: int = 0
     video_height: int = 0
     latency_sec: float = 0
     error: str = ""
-    detection_summary: dict = {}
+    detection_summary: dict = Field(default_factory=dict)
 
 
 class BatchJob(BaseModel):

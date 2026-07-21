@@ -1,6 +1,9 @@
 import asyncio
+import io
 import unittest
 from unittest.mock import patch
+
+from fastapi import HTTPException, UploadFile
 
 from insightclass.web import server
 
@@ -76,6 +79,38 @@ class CameraConfigurationTests(unittest.TestCase):
         payload = bytes(response.body)
         self.assertIn(b'"active":true', payload)
         self.assertIn(b'"camera_ip":"192.168.1.10"', payload)
+
+
+class ModelLifecycleTests(unittest.TestCase):
+    def test_preload_worker_reports_ready(self):
+        class Backend:
+            def _load_model(self, _path):
+                return None
+
+        with patch.object(server, "_get_onnx_backend", return_value=Backend()):
+            server._preload_model_worker("model.onnx")
+
+        self.assertEqual(server._get_model_state()["status"], "ready")
+
+    def test_preload_worker_reports_errors(self):
+        class Backend:
+            def _load_model(self, _path):
+                raise RuntimeError("broken model")
+
+        with patch.object(server, "_get_onnx_backend", return_value=Backend()):
+            server._preload_model_worker("model.onnx")
+
+        state = server._get_model_state()
+        self.assertEqual(state["status"], "error")
+        self.assertIn("broken model", state["error"])
+
+    def test_invalid_frame_is_a_client_error(self):
+        upload = UploadFile(filename="frame.jpg", file=io.BytesIO(b"not-an-image"))
+
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(server.detect_frame(upload, "", 0.5, 0.45))
+
+        self.assertEqual(raised.exception.status_code, 400)
 
 
 if __name__ == "__main__":

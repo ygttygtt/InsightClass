@@ -79,6 +79,8 @@ DEFAULT_RTSP_PASSWORD = "1000phone"
 DEFAULT_RTSP_PORT = 554
 
 _rtsp_lock = threading.Lock()
+_app_config_lock = threading.RLock()
+_camera_config_lock = threading.RLock()
 _FFMPEG_OPTIONS = "rtsp_transport;tcp|stimeout;5000000|rw_timeout;5000000"
 
 
@@ -402,15 +404,18 @@ def _load_class_display_names() -> dict[str, str]:
 
 
 def _load_custom_cameras() -> list[dict]:
-    if not CAMERAS_CONFIG.exists():
-        return []
-    data = load_yaml(str(CAMERAS_CONFIG))
-    return data.get("cameras", [])
+    with _camera_config_lock:
+        if not CAMERAS_CONFIG.exists():
+            return []
+        data = load_yaml(str(CAMERAS_CONFIG))
+        cameras = data.get("cameras", [])
+        return cameras if isinstance(cameras, list) else []
 
 
 def _save_custom_cameras(cameras: list[dict]):
-    CAMERAS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    save_yaml(str(CAMERAS_CONFIG), {"cameras": cameras})
+    with _camera_config_lock:
+        CAMERAS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        save_yaml(str(CAMERAS_CONFIG), {"cameras": cameras})
 
 
 _camera_ping_results: dict[str, dict] = {}
@@ -443,14 +448,24 @@ async def _ping_cameras_periodically():
 
 
 def _load_app_config() -> dict:
-    if not APP_CONFIG.exists():
-        return {}
-    return load_yaml(str(APP_CONFIG))
+    with _app_config_lock:
+        if not APP_CONFIG.exists():
+            return {}
+        return load_yaml(str(APP_CONFIG))
 
 
 def _save_app_config(cfg: dict):
-    APP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    save_yaml(str(APP_CONFIG), cfg)
+    with _app_config_lock:
+        APP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        save_yaml(str(APP_CONFIG), cfg)
+
+
+def _update_app_config(values: dict) -> dict:
+    with _app_config_lock:
+        cfg = _load_app_config()
+        cfg.update(values)
+        _save_app_config(cfg)
+        return cfg
 
 
 def _get_default_model() -> str:
@@ -675,6 +690,12 @@ def _extract_detections(result, display_names: dict[str, str]) -> list[Detection
 # when two cameras select different models concurrently.
 _onnx_backends: dict[str, OnnxBackend] = {}
 _onnx_backends_lock = threading.Lock()
+_model_state_lock = threading.Lock()
+_model_state = {
+    "status": "idle",
+    "model": "",
+    "error": "",
+}
 
 
 def _get_onnx_backend(weights_path: str) -> OnnxBackend:
@@ -696,6 +717,30 @@ def _resolve_weights_path(model: str = "") -> str:
         raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+def _set_model_state(status: str, model: str = "", error: str = "") -> None:
+    with _model_state_lock:
+        _model_state.update({"status": status, "model": model, "error": error})
+
+
+def _get_model_state() -> dict:
+    with _model_state_lock:
+        return dict(_model_state)
+
+
+def _preload_model_worker(weights_path: str) -> None:
+    _set_model_state("loading", weights_path)
+    try:
+        if _is_onnx_model(weights_path):
+            _get_onnx_backend(weights_path)._load_model(weights_path)
+        else:
+            preload_model(weights_path)
+    except Exception as exc:
+        logger.exception("Model preload failed: %s", weights_path)
+        _set_model_state("error", weights_path, str(exc))
+    else:
+        _set_model_state("ready", weights_path)
 
 
 def _build_inference_backend(weights_path: str):
@@ -733,19 +778,93 @@ def _onnx_detections_to_detection_outs(
     return detections
 
 
+def _infer_frame_detections(
+    frame: np.ndarray,
+    weights_path: str,
+    confidence: float,
+    iou: float,
+) -> list[DetectionOut]:
+    display_names = _load_class_display_names()
+    if _is_onnx_model(weights_path):
+        backend = _get_onnx_backend(weights_path)
+        results = backend.predict_frame(frame, weights_path, confidence, iou)
+        return _onnx_detections_to_detection_outs(
+            results, display_names, _load_class_names()
+        )
+
+    model = get_model(weights_path)
+    results = model.predict(
+        source=frame,
+        conf=confidence,
+        iou=iou,
+        verbose=False,
+        stream=False,
+        save=False,
+    )
+    if not results:
+        return []
+    return _extract_detections(results[0], display_names)
+
+
+async def _infer_frame_for_request(
+    frame: np.ndarray,
+    model: str,
+    confidence: float,
+    iou: float,
+) -> list[DetectionOut]:
+    weights_path = _resolve_weights_path(model)
+    try:
+        return await asyncio.to_thread(
+            _infer_frame_detections,
+            frame,
+            weights_path,
+            confidence,
+            iou,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Inference failed with model %s", weights_path)
+        raise HTTPException(500, f"Inference failed: {exc}") from exc
+
+
+def _draw_detection_outs(
+    image: np.ndarray,
+    detections: list[DetectionOut],
+) -> np.ndarray:
+    pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    font = _get_font(18)
+    colors = [(56, 189, 248), (244, 114, 182), (52, 211, 153), (251, 191, 36)]
+    for detection in detections:
+        x1, y1, x2, y2 = [int(value) for value in detection.xyxy]
+        color = colors[detection.class_id % len(colors)]
+        label = f"{detection.display_name or detection.class_name} {detection.confidence:.2f}"
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+        bbox = draw.textbbox((0, 0), label, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        label_top = max(0, y1 - text_height - 8)
+        draw.rectangle(
+            [x1, label_top, x1 + text_width + 8, label_top + text_height + 8],
+            fill=color,
+        )
+        draw.text((x1 + 4, label_top + 4), label, fill=(0, 0, 0), font=font)
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Defer model loading to background so the server starts accepting connections immediately
+    # Start the server first; model loading happens in a daemon thread so the
+    # loading screen and health endpoint are available immediately.
     default_weights = _find_default_weights()
     if default_weights:
-        if _is_onnx_model(default_weights):
-            asyncio.get_event_loop().run_in_executor(
-                None,
-                _get_onnx_backend(default_weights)._load_model,
-                default_weights,
-            )
-        else:
-            asyncio.get_event_loop().run_in_executor(None, preload_model, default_weights)
+        threading.Thread(
+            target=_preload_model_worker,
+            args=(default_weights,),
+            daemon=True,
+            name="insightclass-model-preload",
+        ).start()
     ping_task = asyncio.create_task(_ping_cameras_periodically())
     yield
     ping_task.cancel()
@@ -772,6 +891,11 @@ app.add_middleware(
 @app.get("/api/experiments")
 async def list_experiments():
     return JSONResponse(_get_experiments())
+
+
+@app.get("/api/system/status")
+async def system_status():
+    return JSONResponse({"service": "ready", "model": _get_model_state()})
 
 
 @app.get("/api/experiments/{exp_id}/results.csv")
@@ -809,10 +933,14 @@ async def get_default_model():
 @app.post("/api/settings/default-model")
 async def set_default_model(request: Request):
     body = await request.json()
-    model = body.get("model", "")
-    cfg = _load_app_config()
-    cfg["default_model"] = model
-    _save_app_config(cfg)
+    model = _resolve_weights_path(str(body.get("model", "")))
+    _update_app_config({"default_model": model})
+    threading.Thread(
+        target=_preload_model_worker,
+        args=(model,),
+        daemon=True,
+        name="insightclass-model-preload",
+    ).start()
     return JSONResponse({"ok": True, "model": model})
 
 
@@ -838,43 +966,18 @@ async def get_ui_defaults():
 async def detect_frame(
     image: UploadFile = File(...),
     model: str = Form(default=""),
-    confidence: float = Form(default=DEFAULT_CONFIDENCE),
-    iou: float = Form(default=DEFAULT_IOU),
+    confidence: float = Form(default=DEFAULT_CONFIDENCE, ge=0.0, le=1.0),
+    iou: float = Form(default=DEFAULT_IOU, ge=0.0, le=1.0),
 ):
     t0 = time.time()
-
     contents = await image.read()
-    detections = []
-    h, w = 0, 0
-
-    try:
-        weights_path = _resolve_weights_path(model)
-        display_names = _load_class_display_names()
-
-        if _is_onnx_model(weights_path):
-            nparr = np.frombuffer(contents, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if frame is not None:
-                h, w = frame.shape[:2]
-                onnx = _get_onnx_backend(weights_path)
-                results = onnx.predict_frame(frame, weights_path, confidence, iou)
-                class_names = _load_class_names()
-                detections = _onnx_detections_to_detection_outs(results, display_names, class_names)
-        else:
-            yolo = get_model(weights_path)
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                tmp_path = Path(tmp_dir) / "frame.jpg"
-                tmp_path.write_bytes(contents)
-                results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
-                if results and len(results) > 0:
-                    detections = _extract_detections(results[0], display_names)
-                    h, w = results[0].orig_shape
-    except Exception as exc:
-        logger.warning("detect_frame failed: %s", exc)
-
-    # Record dashboard stats
-    for det in detections:
-        _dashboard_stats.record("webcam", det.class_name)
+    frame = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(400, "Unable to decode image")
+    h, w = frame.shape[:2]
+    detections = await _infer_frame_for_request(
+        frame, model, confidence, iou
+    )
 
     latency = (time.time() - t0) * 1000
     return FrameDetectionResponse(
@@ -889,8 +992,8 @@ async def detect_frame(
 async def detect_upload(
     video: UploadFile = File(...),
     model: str = Form(default=""),
-    confidence: float = Form(default=DEFAULT_CONFIDENCE),
-    iou: float = Form(default=DEFAULT_IOU),
+    confidence: float = Form(default=DEFAULT_CONFIDENCE, ge=0.0, le=1.0),
+    iou: float = Form(default=DEFAULT_IOU, ge=0.0, le=1.0),
 ):
     t0 = time.time()
 
@@ -900,9 +1003,14 @@ async def detect_upload(
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / f"video{suffix}"
         contents = await video.read()
+        if not contents:
+            raise HTTPException(400, "Uploaded video is empty")
         tmp_path.write_bytes(contents)
 
         cap = cv2.VideoCapture(str(tmp_path))
+        if not cap.isOpened():
+            cap.release()
+            raise HTTPException(400, "Unable to open uploaded video")
         video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -940,9 +1048,6 @@ async def detect_upload(
                 for d in fp.detections
             ]
             frames_out.append(FrameOut(frame_index=fp.frame_index, detections=dets))
-            # Record dashboard stats
-            for d in fp.detections:
-                _dashboard_stats.record("upload", d.class_name)
 
     total_latency = round(time.time() - t0, 2)
     return VideoDetectionResponse(
@@ -959,99 +1064,28 @@ async def detect_upload(
 async def detect_image(
     image: UploadFile = File(...),
     model: str = Form(default=""),
-    confidence: float = Form(default=DEFAULT_CONFIDENCE),
-    iou: float = Form(default=DEFAULT_IOU),
+    confidence: float = Form(default=DEFAULT_CONFIDENCE, ge=0.0, le=1.0),
+    iou: float = Form(default=DEFAULT_IOU, ge=0.0, le=1.0),
 ):
-    if not model:
-        return JSONResponse({"error": "请选择一个模型"}, status_code=400)
-
     t0 = time.time()
     contents = await image.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
-        return JSONResponse({"error": "无法解析图片"}, status_code=400)
+        raise HTTPException(400, "Unable to decode image")
 
-    weights_path = _resolve_weights_path(model)
-
-    display_names = _load_class_display_names()
-    detections = []
-
-    if _is_onnx_model(weights_path):
-        try:
-            onnx = _get_onnx_backend(weights_path)
-            results = onnx.predict_frame(img, weights_path, confidence, iou)
-            class_names = _load_class_names()
-
-            # Draw ONNX results using PIL
-            pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-            draw = ImageDraw.Draw(pil_img)
-            font = _get_font(18)
-            colors = [(56,189,248),(244,114,182),(52,211,153),(251,191,36),(167,139,250)]
-            for r in results:
-                cid = r["class_id"]
-                cn = class_names.get(cid, str(cid))
-                conf = r["confidence"]
-                x1, y1, x2, y2 = [int(v) for v in r["xyxy"]]
-                color = colors[cid % len(colors)]
-                dn = display_names.get(cn, cn)
-                label = f"{dn} {conf:.2f}"
-                draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
-                bbox = draw.textbbox((0, 0), label, font=font)
-                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                draw.rectangle([x1, y1 - th - 8, x1 + tw + 8, y1], fill=color)
-                draw.text((x1 + 4, y1 - th - 4), label, fill=(0,0,0), font=font)
-                detections.append({
-                    "class_name": cn,
-                    "display_name": dn,
-                    "confidence": round(conf, 4),
-                    "xyxy": r["xyxy"],
-                })
-            annotated = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-            _, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 92])
-            img_b64 = base64.b64encode(buf).decode('utf-8')
-        except Exception as exc:
-            logger.warning("detect_image ONNX failed: %s", exc)
-            _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 92])
-            img_b64 = base64.b64encode(buf).decode('utf-8')
-    else:
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            cv2.imwrite(tmp.name, img)
-            tmp_path = tmp.name
-
-        try:
-            yolo = get_model(weights_path)
-            results = yolo.predict(source=tmp_path, conf=confidence, iou=iou, verbose=False, save=False)
-            annotated = _draw_detections_pil(img, results, display_names)
-
-            _, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 92])
-            img_b64 = base64.b64encode(buf).decode('utf-8')
-
-            if results and results[0].boxes is not None:
-                result = results[0]
-                boxes = result.boxes.xyxy.cpu().numpy()
-                confs = result.boxes.conf.cpu().numpy()
-                cls_ids = result.boxes.cls.cpu().numpy().astype(int)
-                names = result.names if result.names else {}
-                for j in range(len(boxes)):
-                    cn = names.get(int(cls_ids[j]), str(int(cls_ids[j])))
-                    detections.append({
-                        "class_name": cn,
-                        "display_name": display_names.get(cn, cn),
-                        "confidence": round(float(confs[j]), 4),
-                        "xyxy": boxes[j].tolist(),
-                    })
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
-
-    # Record dashboard stats
-    for det in detections:
-        _dashboard_stats.record("image", det["class_name"])
+    detections = await _infer_frame_for_request(img, model, confidence, iou)
+    annotated = await asyncio.to_thread(_draw_detection_outs, img, detections)
+    encoded, buf = cv2.imencode(
+        ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 92]
+    )
+    if not encoded:
+        raise HTTPException(500, "Unable to encode detection result")
+    img_b64 = base64.b64encode(buf).decode("ascii")
 
     latency = round((time.time() - t0) * 1000, 1)
     return JSONResponse({
         "image": f"data:image/jpeg;base64,{img_b64}",
-        "detections": detections,
+        "detections": [item.model_dump() for item in detections],
         "latency_ms": latency,
     })
 
@@ -1100,8 +1134,8 @@ async def batch_upload(videos: list[UploadFile] = File(...)):
 async def batch_detect(
     batch_id: str,
     model: str = Form(default=""),
-    confidence: float = Form(default=DEFAULT_CONFIDENCE),
-    iou: float = Form(default=DEFAULT_IOU),
+    confidence: float = Form(default=DEFAULT_CONFIDENCE, ge=0.0, le=1.0),
+    iou: float = Form(default=DEFAULT_IOU, ge=0.0, le=1.0),
 ):
     job = _batch_jobs.get(batch_id)
     if not job:
@@ -1504,8 +1538,8 @@ async def stream_status(camera_ip: str):
 async def detect_rtsp(
     camera_ip: str = Form(...),
     model: str = Form(default=""),
-    confidence: float = Form(default=DEFAULT_CONFIDENCE),
-    iou: float = Form(default=DEFAULT_IOU),
+    confidence: float = Form(default=DEFAULT_CONFIDENCE, ge=0.0, le=1.0),
+    iou: float = Form(default=DEFAULT_IOU, ge=0.0, le=1.0),
 ):
     t0 = time.time()
 
@@ -1526,27 +1560,7 @@ async def detect_rtsp(
         return FrameDetectionResponse(detections=[], latency_ms=0, frame_width=0, frame_height=0)
 
     h, w = frame.shape[:2]
-    detections = []
-    try:
-        weights_path = _resolve_weights_path(model)
-        display_names = _load_class_display_names()
-
-        if _is_onnx_model(weights_path):
-            onnx = _get_onnx_backend(weights_path)
-            results = onnx.predict_frame(frame, weights_path, confidence, iou)
-            class_names = _load_class_names()
-            detections = _onnx_detections_to_detection_outs(results, display_names, class_names)
-        else:
-            yolo = get_model(weights_path)
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                tmp_path = Path(tmp_dir) / "frame.jpg"
-                cv2.imwrite(str(tmp_path), frame)
-                results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
-                if results and len(results) > 0:
-                    detections = _extract_detections(results[0], display_names)
-                    h, w = results[0].orig_shape
-    except Exception as exc:
-        logger.warning("detect_rtsp failed: %s", exc)
+    detections = await _infer_frame_for_request(frame, model, confidence, iou)
 
     # Record dashboard stats
     for det in detections:
@@ -1668,13 +1682,19 @@ async def get_rtsp_credentials():
 async def set_rtsp_credentials(request: Request):
     """设置全局 RTSP 凭据。"""
     body = await request.json()
-    cfg = _load_app_config()
-    cfg["rtsp_credentials"] = {
+    rtsp_credentials = {
         "username": body.get("username", DEFAULT_RTSP_USERNAME),
         "password": body.get("password", DEFAULT_RTSP_PASSWORD),
         "port": body.get("port", DEFAULT_RTSP_PORT),
     }
-    _save_app_config(cfg)
+    try:
+        port = int(rtsp_credentials["port"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "RTSP port must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise HTTPException(422, "RTSP port must be between 1 and 65535")
+    rtsp_credentials["port"] = port
+    _update_app_config({"rtsp_credentials": rtsp_credentials})
     _stream_registry.stop_all()
     return JSONResponse({"ok": True})
 

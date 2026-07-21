@@ -5,6 +5,7 @@ use the ultralytics backend on a GPU server for training, then export to ONNX.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import cv2
@@ -30,6 +31,7 @@ class OnnxBackend(DetectorBackend):
         self._input_name: str | None = None
         self._model_path: str | None = None
         self._input_size: int | None = None
+        self._load_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Model loading
@@ -39,17 +41,20 @@ class OnnxBackend(DetectorBackend):
         """Load ONNX model lazily (cached by path)."""
         if self._model_path == weights_path and self._session is not None:
             return
-        import onnxruntime as ort
+        with self._load_lock:
+            if self._model_path == weights_path and self._session is not None:
+                return
+            import onnxruntime as ort
 
-        self._session = ort.InferenceSession(
-            weights_path,
-            providers=["CPUExecutionProvider"],
-        )
-        model_input = self._session.get_inputs()[0]
-        self._input_name = model_input.name
-        input_width = model_input.shape[-1]
-        self._input_size = input_width if isinstance(input_width, int) else None
-        self._model_path = weights_path
+            self._session = ort.InferenceSession(
+                weights_path,
+                providers=["CPUExecutionProvider"],
+            )
+            model_input = self._session.get_inputs()[0]
+            self._input_name = model_input.name
+            input_width = model_input.shape[-1]
+            self._input_size = input_width if isinstance(input_width, int) else None
+            self._model_path = weights_path
 
     # ------------------------------------------------------------------
     # Pre / post processing
