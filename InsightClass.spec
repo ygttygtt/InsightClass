@@ -26,7 +26,6 @@ a = Analysis(
     binaries=[],
     datas=_datas,
     hiddenimports=[
-        'engineio.async_drivers.threading',
         'uvicorn',
         'uvicorn.logging',
         'uvicorn.loops',
