@@ -1,29 +1,28 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for InsightClass — single-folder distribution.
+"""PyInstaller spec for the InsightClass windowed application.
 
 Excludes PyTorch and ultralytics (use ONNX Runtime for inference).
 Bundles ONNX models from models/onnx/. Includes pywebview launcher.
 """
 
-import sys
 from pathlib import Path
 
 block_cipher = None
+root = Path(SPECPATH)
 
 # --- Build data list before Analysis ---
 _datas = [
-    ('configs/classes.yaml', 'configs'),
-    ('frontend/dist', 'frontend/dist'),
+    (str(root / 'configs' / 'classes.yaml'), 'configs'),
+    (str(root / 'frontend' / 'dist'), 'frontend/dist'),
 ]
 
 # Bundle ONNX models
-import glob as _glob
-for _f in _glob.glob('models/onnx/*.onnx'):
-    _datas.append((_f, 'models/onnx'))
+for _file in (root / 'models' / 'onnx').glob('*.onnx'):
+    _datas.append((str(_file), 'models/onnx'))
 
 a = Analysis(
     ['src/insightclass/web/launcher.pyw'],
-    pathex=[],
+    pathex=[str(root / 'src')],
     binaries=[],
     datas=_datas,
     hiddenimports=[
@@ -44,10 +43,11 @@ a = Analysis(
         'cv2',
         'yaml',
         'webview',
-        'webview.platforms',
+        'webview.platforms.winforms',
         'pystray',
         'pystray._win32',
         'onnxruntime',
+        'insightclass.web.server',
     ],
     hookspath=[],
     hooksconfig={},
@@ -66,6 +66,17 @@ a = Analysis(
         'pandas',
         'tensorboard',
         'mlflow',
+        'cefpython3',
+        'IPython',
+        'ipykernel',
+        'jupyter',
+        'sphinx',
+        'nbformat',
+        'jedi',
+        'parso',
+        'black',
+        'zmq',
+        'tkinter',
     ],
     noarchive=False,
     cipher=block_cipher,
@@ -82,7 +93,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     icon=None,
 )
@@ -92,7 +103,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='InsightClass',
 )
