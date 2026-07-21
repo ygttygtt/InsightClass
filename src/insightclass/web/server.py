@@ -1824,20 +1824,42 @@ async def dashboard_history():
 
 @app.get("/api/settings/rtsp-credentials")
 async def get_rtsp_credentials():
-    """获取全局 RTSP 凭据。"""
+    """Return RTSP settings without exposing the stored password."""
     creds = _get_rtsp_credentials()
-    return JSONResponse(creds)
+    password = str(creds.get("password", ""))
+    return JSONResponse({
+        "username": creds.get("username", DEFAULT_RTSP_USERNAME),
+        "password": "",
+        "has_password": bool(password),
+        "password_masked": f"...{password[-4:]}" if password else "",
+        "port": creds.get("port", DEFAULT_RTSP_PORT),
+    })
 
 
 @app.post("/api/settings/rtsp-credentials")
 async def set_rtsp_credentials(request: Request):
     """设置全局 RTSP 凭据。"""
     body = await request.json()
+    current = _get_rtsp_credentials()
+    password = body.get("password")
+    if password is None or not str(password).strip():
+        password = current["password"]
     rtsp_credentials = {
-        "username": body.get("username", DEFAULT_RTSP_USERNAME),
-        "password": body.get("password", DEFAULT_RTSP_PASSWORD),
-        "port": body.get("port", DEFAULT_RTSP_PORT),
+        "username": str(body.get("username", current["username"])).strip() or current["username"],
+        "password": str(password),
+        "port": body.get("port", current["port"]),
     }
+
+    try:
+        port = int(rtsp_credentials["port"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "RTSP port must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise HTTPException(422, "RTSP port must be between 1 and 65535")
+    rtsp_credentials["port"] = port
+    _update_app_config({"rtsp_credentials": rtsp_credentials})
+    _stream_registry.stop_all()
+    return JSONResponse({"ok": True})
 
 
 def _get_llm_config() -> dict:
@@ -1870,16 +1892,6 @@ def _build_llm_client() -> OpenAICompatibleClient:
         return OpenAICompatibleClient(OpenAICompatibleConfig(**config))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    try:
-        port = int(rtsp_credentials["port"])
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(422, "RTSP port must be an integer") from exc
-    if not 1 <= port <= 65535:
-        raise HTTPException(422, "RTSP port must be between 1 and 65535")
-    rtsp_credentials["port"] = port
-    _update_app_config({"rtsp_credentials": rtsp_credentials})
-    _stream_registry.stop_all()
-    return JSONResponse({"ok": True})
 
 
 # ---- CSV Import Cameras ----
@@ -1888,7 +1900,7 @@ def _detect_csv_columns(header: list[str]) -> dict[str, int]:
     """Auto-detect column indices from a CSV header row.
 
     Returns a dict mapping field names to column indices.
-    Supported fields: ip, name, port, username, password.
+    Supported fields: ip, name, and username.
     Falls back to Hikvision default column positions when header
     matching fails.
     """
@@ -1924,15 +1936,6 @@ def _detect_csv_columns(header: list[str]) -> dict[str, int]:
         # Hikvision default: column 5 is username
         col_map['username'] = 5
 
-    # Password
-    for i, col in enumerate(normalized):
-        if col in ('密码', 'password', '登录密码'):
-            col_map['password'] = i
-            break
-    if 'password' not in col_map and len(header) >= 7:
-        # Hikvision default: column 6 is password
-        col_map['password'] = 6
-
     return col_map
 
 
@@ -1945,7 +1948,8 @@ async def import_cameras_csv(file: UploadFile = File(...)):
     - Column 3: Port (HTTP management port, 8000)
     - Column 4: Device serial number (used as device name)
     - Column 5: Username
-    - Column 6: Password
+    Password columns are intentionally ignored; configure the shared RTSP
+    password in the settings screen instead.
     """
     try:
         contents = await file.read()
@@ -1977,7 +1981,6 @@ async def import_cameras_csv(file: UploadFile = File(...)):
         ip_col = col_map['ip']
         name_col = col_map.get('name')
         username_col = col_map.get('username')
-        password_col = col_map.get('password')
 
         existing_cameras = _load_custom_cameras()
         existing_ips = {c["ip"] for c in existing_cameras}
@@ -2009,17 +2012,10 @@ async def import_cameras_csv(file: UploadFile = File(...)):
             if username_col is not None and len(row) > username_col:
                 username = row[username_col].strip()
 
-            # Extract password
-            password = ""
-            if password_col is not None and len(row) > password_col:
-                password = row[password_col].strip()
-
             # Build note with RTSP info (always use port 554, not CSV's HTTP port)
             note_parts = ["RTSP:554"]
             if username:
                 note_parts.append(f"用户:{username}")
-            if password:
-                note_parts.append(f"密码:{password}")
             note = " ".join(note_parts)
 
             existing_cameras.append({

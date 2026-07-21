@@ -8,6 +8,14 @@ from fastapi import HTTPException, UploadFile
 from insightclass.web import server
 
 
+class JsonRequest:
+    def __init__(self, payload):
+        self.payload = payload
+
+    async def json(self):
+        return self.payload
+
+
 class FakeStreamManager:
     def __init__(self):
         self.url = ""
@@ -47,6 +55,31 @@ class RtspStreamRegistryTests(unittest.TestCase):
 
 
 class CameraConfigurationTests(unittest.TestCase):
+    def test_rtsp_credentials_response_masks_password(self):
+        with patch.object(server, "_get_rtsp_credentials", return_value={
+            "username": "admin", "password": "secret-value", "port": 554,
+        }):
+            response = asyncio.run(server.get_rtsp_credentials())
+
+        self.assertNotIn(b"secret-value", bytes(response.body))
+        self.assertIn(b'"has_password":true', bytes(response.body))
+        self.assertIn(b'"password_masked":"...alue"', bytes(response.body))
+
+    def test_rtsp_credentials_update_preserves_blank_password(self):
+        with patch.object(server, "_get_rtsp_credentials", return_value={
+            "username": "old-user", "password": "old-password", "port": 554,
+        }), patch.object(server, "_update_app_config") as update, patch.object(
+            server._stream_registry, "stop_all"
+        ):
+            response = asyncio.run(server.set_rtsp_credentials(JsonRequest({
+                "username": "new-user", "password": "", "port": 8554,
+            })))
+
+        self.assertEqual(response.status_code, 200)
+        update.assert_called_once_with({"rtsp_credentials": {
+            "username": "new-user", "password": "old-password", "port": 8554,
+        }})
+
     def test_rtsp_url_encodes_credentials(self):
         url = server._build_rtsp_url(
             "192.168.1.10", username="user@example", password="p@ss:/word", port=554

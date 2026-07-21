@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
-import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, LlmSettings, SystemStatus } from './types'
+import type { Camera, DetectionOut, DisplayNames, SourceMode, BatchItem, LlmSettings, SystemStatus, RtspCredentials } from './types'
 import { addCamera, updateCamera, deleteCamera, detectFrame, detectRtsp, detectImage, detectUpload, getDisplayNames, getStreamStatus, stopStream, getExperiments, getUiDefaults, getCameras, getSystemStatus, testCameras, batchUpload, batchDetect as batchDetectApi, getBatchStatus, getBatchItem, downloadBatchExport, importCamerasCsv, getRtspCredentials, setRtspCredentials as saveRtspCredentialsApi, setDefaultModel, getLlmSettings, setLlmSettings, testLlmConnection } from './api/client'
 
 // Health check constants
@@ -74,7 +74,7 @@ function App() {
 
   // Settings modal state
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
-  const [rtspCredentials, setRtspCredentials] = useState({ username: 'admin', password: '', port: 554 })
+  const [rtspCredentials, setRtspCredentials] = useState<RtspCredentials>({ username: 'admin', password: '', port: 554 })
   const [llmSettings, setLlmSettingsState] = useState<LlmSettings | null>(null)
   const [llmForm, setLlmForm] = useState({ base_url: '', model: '', api_key: '', timeout: 60 })
   const [llmSaving, setLlmSaving] = useState(false)
@@ -1324,7 +1324,7 @@ function App() {
                 <input type="text" value={rtspCredentials.username} onChange={(e) => setRtspCredentials(prev => ({ ...prev, username: e.target.value }))} />
               </div>
               <div className="cam-field">
-                <label>RTSP 密码</label>
+                <label>RTSP 密码 {rtspCredentials.has_password ? `(${rtspCredentials.password_masked || '已配置'})` : ''}</label>
                 <input type="password" value={rtspCredentials.password} onChange={(e) => setRtspCredentials(prev => ({ ...prev, password: e.target.value }))} />
               </div>
               <div className="cam-field">

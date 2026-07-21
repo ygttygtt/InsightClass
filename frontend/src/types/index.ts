@@ -16,6 +16,8 @@ export interface RtspCredentials {
   username: string
   password: string
   port: number
+  has_password?: boolean
+  password_masked?: string
 }
 
 export interface LlmSettings {
