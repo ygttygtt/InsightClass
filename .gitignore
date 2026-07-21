@@ -93,6 +93,7 @@ frontend/dist/
 # User camera config
 configs/cameras.yaml
 configs/app.yaml
+configs/webview/
 
 # SSL certificates (auto-generated)
 configs/ssl/

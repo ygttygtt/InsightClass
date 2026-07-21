@@ -292,6 +292,8 @@ def main() -> None:
         webview.start(
             debug=False,
             icon=str(_resource_path("assets", "insightclass.ico")),
+            private_mode=False,
+            storage_path=str(_config_dir() / "webview"),
         )
     finally:
         state["quitting"] = True
