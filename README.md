@@ -25,6 +25,24 @@ insightclass serve --host 0.0.0.0 --port 8080
 >
 > **摄像头配置**：`configs/cameras.yaml` 和 `configs/app.yaml` 由 Web 界面自动创建和管理，无需手动配置。
 
+### Windows 桌面便携版
+
+```powershell
+# 构建前端、后端和 Windows 桌面窗口，并生成 ZIP
+.\scripts\build_package.ps1
+
+# 已安装依赖时可跳过 pip 安装
+.\scripts\build_package.ps1 -SkipDeps
+```
+
+构建结果为 `dist/InsightClass-Web/InsightClass.exe` 和
+`InsightClass-Web.zip`。程序启动时会先显示加载界面，随后在同一窗口打开
+Web 应用；关闭窗口仅隐藏到系统托盘，后端会继续运行。双击托盘图标或再次
+运行 EXE 可唤醒窗口，使用托盘菜单中的“退出”才会结束后端。
+
+运行桌面版需要 Windows 10/11 和 Microsoft Edge WebView2 Runtime（多数系统已
+预装）。完整构建说明见 [09 打包与发行](docs/09_打包与发行.md)。
+
 ## 功能
 
 - **RTSP 实时监控**：连接教室摄像头，实时查看画面（MJPEG 流）
@@ -35,6 +53,8 @@ insightclass serve --host 0.0.0.0 --port 8080
 - **摄像头管理**：Web 界面添加/删除/编辑/测试摄像头连通性
 - **模型管理**：支持多模型切换，可设默认模型
 - **Dashboard 统计**：各摄像头检测数据统计，支持导出报告
+- **大模型分析**：支持 OpenAI 兼容的 Chat Completions API，可在设置中配置服务地址、模型和 API Key
+- **桌面应用**：无控制台窗口，支持加载页、系统托盘保活和单实例唤醒
 
 ## CLI 命令
 
@@ -78,7 +98,7 @@ InsightClass/
     ├── visualization/    #   可视化模块
     ├── web/              #   Web 服务模块
     │   ├── server.py     #     FastAPI REST API（合并了旧 demo/experiment_viewer）
-    │   ├── launcher.pyw  #     Windows 桌面启动器（tkinter）
+    │   ├── launcher.pyw  #     Windows 桌面启动器（WebView + 系统托盘）
     │   ├── model_cache.py#     模型缓存
     │   └── schemas.py    #     API 响应数据结构（Pydantic）
     └── utils/            #   工具函数
