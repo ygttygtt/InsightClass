@@ -5,13 +5,23 @@ from insightclass.optional import require_package
 _model_cache: dict[str, object] = {}
 
 
-def get_model(weights_path: str):
-    require_package("ultralytics", "Web inference")
-    from ultralytics import YOLO
+def _is_onnx_model(weights_path: str) -> bool:
+    return weights_path.lower().endswith(".onnx")
 
+
+def get_model(weights_path: str):
     path = str(weights_path)
+
     if path not in _model_cache:
-        _model_cache[path] = YOLO(path)
+        if _is_onnx_model(path):
+            require_package("onnxruntime", "ONNX inference")
+            import onnxruntime as ort
+            _model_cache[path] = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+        else:
+            require_package("ultralytics", "Web inference")
+            from ultralytics import YOLO
+            _model_cache[path] = YOLO(path)
+
     return _model_cache[path]
 
 

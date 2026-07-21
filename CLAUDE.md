@@ -27,7 +27,20 @@ python -m insightclass <subcommand>
 insightclass <subcommand>
 
 # Environment check (PyTorch/CUDA/ultralytics)
-python test_environment.py
+python scripts/test_environment.py
+```
+
+### Packaging & Deployment
+
+```powershell
+# Build Windows .exe (PyInstaller + ZIP)
+.\scripts\build_package.ps1
+```
+
+```bash
+# Linux GPU server setup & training
+bash scripts/server_setup.sh
+bash scripts/server_train.sh [yolo11n|yolo26n] [bg]
 ```
 
 ### CLI Subcommands
@@ -48,18 +61,20 @@ insightclass render-first-frame --config <same>
 # Experiment analysis
 insightclass compare-experiments --experiments-root experiments --output reports/experiment_summary.csv
 
-# Web servers (3 separate FastAPI apps)
+# Web servers
 insightclass serve --host 0.0.0.0 --port 8000 --experiments-root experiments
 insightclass serve --https  # auto-generates self-signed cert at configs/ssl/ (needed for webcam on LAN)
-insightclass view-experiments --experiments-root experiments --port 8001
-insightclass demo --experiments-root experiments --port 8000
 ```
 
 ## Architecture
 
 ### Backend Pattern (Strategy + Factory)
 
-The central extensibility point. `backends/base.py` defines `DetectorBackend` ABC with 5 abstract methods (`train`, `validate`, `predict_images_or_video`, `load_predictions_as_sv_detections`, `export_artifacts`). `backends/factory.py` has `build_backend(name)` as the registry. Currently only `"ultralytics"` is registered. To add a new backend: implement the ABC, register in factory.py — data/evaluation/visualization code stays unchanged.
+The central extensibility point. `backends/base.py` defines `DetectorBackend` ABC with 5 abstract methods (`train`, `validate`, `predict_images_or_video`, `load_predictions_as_sv_detections`, `export_artifacts`). `backends/factory.py` has `build_backend(name)` as the registry. Two backends registered:
+- `"ultralytics"` — PyTorch-based training + inference (GPU server)
+- `"onnx"` — ONNX Runtime CPU-only inference (packaged exe, lightweight)
+
+Training uses ultralytics on GPU server → exports `.onnx` → packaged exe uses onnx backend. To add a new backend: implement the ABC, register in factory.py.
 
 ### Data Pipeline
 
@@ -81,15 +96,23 @@ Implementation lives in `data/manifest.py` (discovery, split, manifest CRUD), `d
 
 Lazy-loaded via `optional.py` (`has_package` / `require_package` using `importlib.util.find_spec`). Core package works with just numpy + PyYAML + opencv-python. ultralytics and supervision are optional extras.
 
-### Web Frontend (`web/`)
+### Web Frontend (`web/` + `frontend/`)
 
-Three independent FastAPI + Jinja2 apps, each with its own CLI entry point:
+Single FastAPI app (`web/server.py`) serving a React SPA built with Vite.
 
-| CLI command | Module | Templates | Purpose |
-|---|---|---|---|
-| `serve` | `web/server.py` | `index.html`, `dashboard.html` | Main app: detection, RTSP streaming, camera mgmt, dashboard |
-| `view-experiments` | `web/experiment_viewer.py` | `experiments.html` | Training metrics viewer (results.csv, confusion matrix) |
-| `demo` | `web/demo.py` | `demo.html` | Image detection + training results in one page |
+| Layer | Technology | Purpose |
+|---|---|---|
+| Backend | FastAPI + Python | REST API for detection, cameras, dashboard |
+| Frontend | React 18 + TypeScript + Vite | SPA with 2 pages: Detection, Dashboard |
+| Styling | CSS Modules + dark theme | Component-scoped styles with shared CSS variables |
+| Charts | Chart.js + react-chartjs-2 | Dashboard charts |
+| Desktop | pywebview | Native window wrapping the web UI |
+
+**Development:** `cd frontend && npm run dev` (Vite on :5173) + `insightclass serve` (API on :8000). Vite proxies `/api` to backend.
+
+**Production:** `cd frontend && npm run build` → `frontend/dist/`. FastAPI serves the built SPA with catch-all routing for React Router.
+
+**Desktop:** `src/insightclass/web/launcher.pyw` — pywebview launcher that starts FastAPI in a background thread and opens a native window. The launcher shows a loading animation immediately, then navigates to the app once the server is ready.
 
 **Main server capabilities** (`insightclass serve`):
 - **Camera detection**: `getUserMedia` → `POST /api/detect/frame` → Canvas overlay
@@ -100,7 +123,7 @@ Three independent FastAPI + Jinja2 apps, each with its own CLI entry point:
 - **Camera management**: CRUD APIs (`/api/cameras/*`) backed by `cameras.yaml`, CSV import for Hikvision format
 - **RTSP credentials**: Global username/password/port stored in `app.yaml` via `/api/settings/rtsp-credentials`
 
-Model caching via `model_cache.py` — YOLO instances are cached by weights path, preloaded at startup via lifespan handler. Weights path is validated to restrict file access (`_validate_weights_path`).
+Model caching via `model_cache.py` — supports both PyTorch (YOLO) and ONNX models. ONNX models are loaded with `onnxruntime` (CPU-only). The `_find_default_weights()` function prefers `.onnx` over `.pt` for faster startup. Weights path is validated to restrict file access (`_validate_weights_path`).
 
 `web/schemas.py` defines Pydantic API models (`DetectionOut`, `FrameDetectionResponse`, `BatchJob`, etc.) — separate from the core `schemas.py` which uses dataclasses.
 
@@ -133,7 +156,11 @@ Standalone scripts outside the package, not installed:
 
 ### Packaging
 
-`InsightClass.spec` — PyInstaller spec for building a standalone Windows `.exe`. Resources (`configs/`, `models/`, `web/templates/`, `web/static/`) are bundled as data files. The `releases/` directory holds published versions.
+`InsightClass.spec` — PyInstaller spec for building a standalone Windows `.exe`. Resources (`configs/`, `models/onnx/`, `frontend/dist/`) are bundled as data files. PyTorch is excluded from the package (ONNX Runtime used instead). The `releases/` directory holds published versions.
+
+**Build command:** `.\scripts\build_package.ps1` (or with flags: `-SkipDeps`, `-BuildInstaller`)
+
+**Architecture:** pywebview native window → FastAPI (background thread) → ONNX Runtime inference. No browser needed, no PyTorch needed at runtime.
 
 ## Conventions
 

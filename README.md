@@ -53,12 +53,10 @@ insightclass render-first-frame --config ...             # 可视化第一帧
 
 # 实验管理
 insightclass compare-experiments --experiments-root experiments --output reports/summary.csv
-insightclass view-experiments --experiments-root experiments --port 8001
 
 # Web 服务
 insightclass serve --host 0.0.0.0 --port 8000            # 主服务（摄像头+Dashboard）
 insightclass serve --host 0.0.0.0 --port 8000 --https    # HTTPS 模式
-insightclass demo --port 8000                            # Demo（推理+实验查看）
 ```
 
 ## 项目结构
@@ -78,8 +76,19 @@ InsightClass/
     ├── data/             #   数据处理模块
     ├── evaluation/       #   实验管理模块
     ├── visualization/    #   可视化模块
-    ├── web/              #   FastAPI Web 前端
+    ├── web/              #   Web 服务模块
+    │   ├── server.py     #     FastAPI REST API（合并了旧 demo/experiment_viewer）
+    │   ├── launcher.pyw  #     Windows 桌面启动器（tkinter）
+    │   ├── model_cache.py#     模型缓存
+    │   └── schemas.py    #     API 响应数据结构（Pydantic）
     └── utils/            #   工具函数
+├── frontend/             # React 前端（TypeScript + Vite）
+│   ├── src/
+│   │   ├── pages/        #   Detection, Dashboard, Experiments
+│   │   ├── components/   #   UI 组件
+│   │   ├── api/          #   API 客户端
+│   │   └── types/        #   TypeScript 类型
+│   └── dist/             #   构建产物（gitignored）
 ```
 
 ## 文档

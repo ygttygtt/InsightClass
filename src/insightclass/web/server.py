@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import csv
 import io
 import json
@@ -9,6 +10,8 @@ import os
 import random
 import re
 import shutil
+import socket
+from datetime import datetime
 import sys
 import tempfile
 import threading
@@ -19,15 +22,17 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, Form, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from PIL import Image, ImageDraw, ImageFont
 
 from insightclass.backends.factory import build_backend
-from insightclass.evaluation.experiments import collect_experiment_records
+from insightclass.backends.onnx_backend import OnnxBackend
+from insightclass.utils.experiments import collect_experiment_records
 from insightclass.schemas import InferenceConfig
-from insightclass.utils.serialization import load_yaml, save_yaml
+from insightclass.utils.serialization import load_json, load_yaml, save_yaml
 from insightclass.web.model_cache import clear_cache, get_model, preload_model
 from insightclass.web.schemas import (
     BatchDetectionResult,
@@ -40,12 +45,6 @@ from insightclass.web.schemas import (
 )
 
 logger = logging.getLogger(__name__)
-
-_TEMPLATES_DIR = Path(__file__).parent / "templates"
-_STATIC_DIR = Path(__file__).parent / "static"
-
-templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-
 
 def _get_base_dir() -> Path:
     """打包后返回 exe 所在目录，开发模式返回 cwd。"""
@@ -64,6 +63,7 @@ def _get_resource_dir() -> Path:
 
 _BASE_DIR = _get_base_dir()
 _RESOURCE_DIR = _get_resource_dir()
+_FRONTEND_DIST = _RESOURCE_DIR / "frontend" / "dist"
 EXPERIMENTS_ROOT = _BASE_DIR / "experiments"
 CLASS_CONFIG = _BASE_DIR / "configs" / "classes.yaml"
 CAMERAS_CONFIG = _BASE_DIR / "configs" / "cameras.yaml"
@@ -73,7 +73,7 @@ DEFAULT_IOU = 0.45
 
 # RTSP 默认凭据（可通过 Web 界面全局设置）
 DEFAULT_RTSP_USERNAME = "admin"
-DEFAULT_RTSP_PASSWORD = ""
+DEFAULT_RTSP_PASSWORD = "1000phone"
 DEFAULT_RTSP_PORT = 554
 
 _rtsp_lock = threading.Lock()
@@ -140,6 +140,33 @@ class RtspStreamManager:
                 self._error = "无法连接摄像头，请检查 IP 地址和网络"
                 self._running = False
                 return
+
+            # Check for black frames and fallback to sub-stream (102)
+            black_frame_count = 0
+            for _ in range(10):  # Check first 10 frames
+                ret, frame = self._cap.read()
+                if ret and frame is not None:
+                    mean_val = frame.mean()
+                    if mean_val > 5:  # Not a black frame
+                        break
+                    black_frame_count += 1
+                time.sleep(0.1)
+
+            if black_frame_count >= 5:  # Most frames are black
+                # Try sub-stream (102)
+                sub_url = self._url.replace("/Channels/101", "/Channels/102")
+                logger.info(f"主码流黑屏，尝试子码流: {sub_url}")
+                if self._cap:
+                    self._cap.release()
+                    self._cap = None
+                self._url = sub_url
+                self._open_capture()
+                if not self._cap or not self._cap.isOpened():
+                    self._status = "error"
+                    self._error = "主码流黑屏，子码流连接失败"
+                    self._running = False
+                    return
+
             self._status = "streaming"
             fail_count = 0
             while self._running:
@@ -230,11 +257,16 @@ class DashboardStats:
 _dashboard_stats = DashboardStats()
 
 
+def _is_onnx_model(path: str) -> bool:
+    """Check if a model path points to an ONNX model."""
+    return path.lower().endswith(".onnx")
+
+
 def _validate_weights_path(path: str) -> str:
     """Restrict model paths to experiments or models directory."""
     p = Path(path).resolve()
-    if not str(p).endswith(".pt"):
-        raise ValueError("Only .pt weight files are allowed")
+    if not (str(p).endswith(".pt") or str(p).endswith(".onnx")):
+        raise ValueError("Only .pt or .onnx weight files are allowed")
     # 允许 experiments/ 目录
     if EXPERIMENTS_ROOT.resolve() in p.parents or p.parent.resolve() == EXPERIMENTS_ROOT.resolve():
         return str(p)
@@ -250,8 +282,15 @@ def _validate_weights_path(path: str) -> str:
 
 
 def _find_default_weights() -> str | None:
-    """Return best.pt: prefer bundled model, then experiments."""
-    # 优先使用内置模型（打包时打入的）
+    """Return best weights path: prefer ONNX models, then .pt."""
+    # 优先使用 ONNX 模型（打包时打入的，启动更快）
+    bundled_onnx = _RESOURCE_DIR / "models" / "onnx"
+    for onnx_file in bundled_onnx.glob("*.onnx"):
+        return str(onnx_file.resolve())
+    user_onnx = _BASE_DIR / "models" / "onnx"
+    for onnx_file in user_onnx.glob("*.onnx"):
+        return str(onnx_file.resolve())
+    # 回退：内置 .pt 模型
     bundled = _RESOURCE_DIR / "models" / "best.pt"
     if bundled.exists():
         return str(bundled.resolve())
@@ -302,6 +341,34 @@ def _save_custom_cameras(cameras: list[dict]):
     save_yaml(str(CAMERAS_CONFIG), {"cameras": cameras})
 
 
+_camera_ping_results: dict[str, dict] = {}
+
+
+async def _ping_cameras_periodically():
+    """Background task to check camera reachability every 30 seconds."""
+    while True:
+        cameras = _load_custom_cameras()
+        for cam in cameras:
+            ip = cam.get("ip", "")
+            if not ip:
+                continue
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                result = sock.connect_ex((ip, 554))
+                sock.close()
+                _camera_ping_results[ip] = {
+                    "reachable": result == 0,
+                    "last_check": datetime.now().isoformat(),
+                }
+            except Exception:
+                _camera_ping_results[ip] = {
+                    "reachable": False,
+                    "last_check": datetime.now().isoformat(),
+                }
+        await asyncio.sleep(30)
+
+
 def _load_app_config() -> dict:
     if not APP_CONFIG.exists():
         return {}
@@ -344,19 +411,135 @@ def _get_experiments() -> list[dict]:
     FIXED_KEYS = {"experiment_id", "backend", "model_weights", "data_version", "class_names"}
     summaries: list[dict] = []
     for r in records:
-        weights = EXPERIMENTS_ROOT / r["experiment_id"] / "weights" / "best.pt"
+        exp_id = r["experiment_id"]
+        exp_dir = EXPERIMENTS_ROOT / exp_id
+        weights = exp_dir / "weights" / "best.pt"
+        record_path = exp_dir / "experiment_record.json"
+        full_record = load_json(record_path) if record_path.exists() else {}
         # Separate metrics from fixed keys
         metrics = {k: v for k, v in r.items() if k not in FIXED_KEYS}
         class_names = r.get("class_names", "")
         if isinstance(class_names, str):
             class_names = [n for n in class_names.split(",") if n]
         summaries.append({
-            "experiment_id": r["experiment_id"],
+            "experiment_id": exp_id,
             "weights_path": str(weights.resolve()) if weights.exists() else "",
             "class_names": class_names,
+            "hyperparameters": full_record.get("hyperparameters", {}),
             "metrics": metrics,
+            "has_results_csv": (exp_dir / "results.csv").exists(),
+            "has_confusion_matrix": (exp_dir / "confusion_matrix.png").exists(),
+            "has_results_png": (exp_dir / "results.png").exists(),
         })
+
+    # If no experiments found, discover models from models/ directory
+    if not summaries:
+        models_dir = _RESOURCE_DIR / "models"
+        user_models_dir = _BASE_DIR / "models"
+        for search_dir in [models_dir, user_models_dir]:
+            if not search_dir.exists():
+                continue
+            # Find ONNX models
+            for onnx_file in sorted(search_dir.glob("*.onnx")):
+                summaries.append({
+                    "experiment_id": onnx_file.stem,
+                    "weights_path": str(onnx_file.resolve()),
+                    "class_names": ["phone_use", "talking", "sleeping", "standing"],
+                    "hyperparameters": {},
+                    "metrics": {},
+                    "has_results_csv": False,
+                    "has_confusion_matrix": False,
+                    "has_results_png": False,
+                })
+            # Find .pt models
+            for pt_file in sorted(search_dir.glob("*.pt")):
+                summaries.append({
+                    "experiment_id": pt_file.stem,
+                    "weights_path": str(pt_file.resolve()),
+                    "class_names": ["phone_use", "talking", "sleeping", "standing"],
+                    "hyperparameters": {},
+                    "metrics": {},
+                    "has_results_csv": False,
+                    "has_confusion_matrix": False,
+                    "has_results_png": False,
+                })
+            # Also check subdirectories (e.g., onnx/)
+            for subdir in search_dir.iterdir():
+                if subdir.is_dir():
+                    for model_file in sorted(subdir.glob("*.onnx")) + sorted(subdir.glob("*.pt")):
+                        summaries.append({
+                            "experiment_id": f"{subdir.name}/{model_file.stem}",
+                            "weights_path": str(model_file.resolve()),
+                            "class_names": ["phone_use", "talking", "sleeping", "standing"],
+                            "hyperparameters": {},
+                            "metrics": {},
+                            "has_results_csv": False,
+                            "has_confusion_matrix": False,
+                            "has_results_png": False,
+                        })
     return summaries
+
+
+def _get_font(size: int = 18) -> ImageFont.FreeTypeFont:
+    """Get a font that supports Chinese characters."""
+    font_paths = [
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+    ]
+    for p in font_paths:
+        try:
+            return ImageFont.truetype(p, size)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default()
+
+
+def _draw_detections_pil(image: np.ndarray, results, display_names: dict[str, str]) -> np.ndarray:
+    """Draw bounding boxes and labels on image using PIL (supports Chinese)."""
+    if results is None or len(results) == 0:
+        return image
+    result = results[0]
+    if result.boxes is None or len(result.boxes) == 0:
+        return image
+
+    boxes = result.boxes.xyxy.cpu().numpy()
+    confs = result.boxes.conf.cpu().numpy()
+    cls_ids = result.boxes.cls.cpu().numpy().astype(int)
+    names = result.names if result.names else {}
+
+    colors = [
+        (56, 189, 248),
+        (244, 114, 182),
+        (52, 211, 153),
+        (251, 191, 36),
+        (167, 139, 250),
+    ]
+
+    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
+    draw = ImageDraw.Draw(pil_img)
+    font = _get_font(18)
+
+    for i in range(len(boxes)):
+        cls_id = cls_ids[i]
+        conf = confs[i]
+        x1, y1, x2, y2 = boxes[i].astype(int)
+        color = colors[cls_id % len(colors)]
+        class_name = names.get(cls_id, str(cls_id))
+        display = display_names.get(class_name, class_name)
+        label = f"{display} {conf:.2f}"
+
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.rectangle([x1, y1 - th - 8, x1 + tw + 8, y1], fill=color)
+        draw.text((x1 + 4, y1 - th - 4), label, fill=(0, 0, 0), font=font)
+
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
 def _extract_detections(result, display_names: dict[str, str]) -> list[DetectionOut]:
@@ -382,53 +565,105 @@ def _extract_detections(result, display_names: dict[str, str]) -> list[Detection
     return detections
 
 
+# ONNX backend singleton (lazy-init)
+_onnx_backend: OnnxBackend | None = None
+
+
+def _get_onnx_backend() -> OnnxBackend:
+    global _onnx_backend
+    if _onnx_backend is None:
+        _onnx_backend = OnnxBackend()
+    return _onnx_backend
+
+
+def _load_class_names() -> dict[int, str]:
+    """Load class_id -> class_name mapping from classes.yaml."""
+    if not CLASS_CONFIG.exists():
+        return {}
+    data = load_yaml(str(CLASS_CONFIG))
+    classes = data.get("classes", [])
+    return {i: str(name) for i, name in enumerate(classes)}
+
+
+def _onnx_detections_to_detection_outs(
+    results: list[dict],
+    display_names: dict[str, str],
+    class_names: dict[int, str],
+) -> list[DetectionOut]:
+    """Convert OnnxBackend.predict_frame() results to DetectionOut list."""
+    detections: list[DetectionOut] = []
+    for r in results:
+        class_id = r["class_id"]
+        class_name = class_names.get(class_id, str(class_id))
+        detections.append(DetectionOut(
+            xyxy=r["xyxy"],
+            confidence=round(r["confidence"], 4),
+            class_id=class_id,
+            class_name=class_name,
+            display_name=display_names.get(class_name, class_name),
+        ))
+    return detections
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Defer model loading to background so the server starts accepting connections immediately
     default_weights = _find_default_weights()
     if default_weights:
-        asyncio.get_event_loop().run_in_executor(None, preload_model, default_weights)
+        if _is_onnx_model(default_weights):
+            asyncio.get_event_loop().run_in_executor(None, _get_onnx_backend()._load_model, default_weights)
+        else:
+            asyncio.get_event_loop().run_in_executor(None, preload_model, default_weights)
+    ping_task = asyncio.create_task(_ping_cameras_periodically())
     yield
+    ping_task.cancel()
     clear_cache()
 
 
 app = FastAPI(title="InsightClass Web", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
+if _FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="static-assets")
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    experiments = _get_experiments()
-    display_names = _load_class_display_names()
-    saved_model = _get_default_model()
-    # Use saved model if valid, otherwise first experiment
-    if not saved_model and experiments:
-        saved_model = experiments[0].get("weights_path", "")
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
-            "experiments": experiments,
-            "display_names": display_names,
-            "default_confidence": DEFAULT_CONFIDENCE,
-            "default_iou": DEFAULT_IOU,
-            "default_model": saved_model,
-        },
-    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/api/experiments")
 async def list_experiments():
-    experiments = _get_experiments()
-    return [
-        ExperimentSummary(
-            experiment_id=r["experiment_id"],
-            weights_path=r.get("weights_path", ""),
-            class_names=r.get("class_names", []),
-            metrics=r.get("metrics", {}),
-        )
-        for r in experiments
-    ]
+    return JSONResponse(_get_experiments())
+
+
+@app.get("/api/experiments/{exp_id}/results.csv")
+async def get_results_csv(exp_id: str):
+    csv_path = EXPERIMENTS_ROOT / exp_id / "results.csv"
+    if not csv_path.exists():
+        raise HTTPException(404, "results.csv not found")
+    text = csv_path.read_text(encoding="utf-8")
+    reader = csv.DictReader(io.StringIO(text))
+    rows = list(reader)
+    return JSONResponse({"columns": reader.fieldnames or [], "rows": rows})
+
+
+@app.get("/api/experiments/{exp_id}/confusion_matrix")
+async def get_confusion_matrix(exp_id: str):
+    img_path = EXPERIMENTS_ROOT / exp_id / "confusion_matrix.png"
+    if not img_path.exists():
+        raise HTTPException(404, "confusion_matrix.png not found")
+    return FileResponse(img_path, media_type="image/png")
+
+
+@app.get("/api/experiments/{exp_id}/results.png")
+async def get_results_png(exp_id: str):
+    img_path = EXPERIMENTS_ROOT / exp_id / "results.png"
+    if not img_path.exists():
+        raise HTTPException(404, "results.png not found")
+    return FileResponse(img_path, media_type="image/png")
 
 
 @app.get("/api/settings/default-model")
@@ -444,6 +679,24 @@ async def set_default_model(request: Request):
     cfg["default_model"] = model
     _save_app_config(cfg)
     return JSONResponse({"ok": True, "model": model})
+
+
+@app.get("/api/settings/display-names")
+async def get_display_names():
+    return JSONResponse(_load_class_display_names())
+
+
+@app.get("/api/settings/ui-defaults")
+async def get_ui_defaults():
+    experiments = _get_experiments()
+    saved_model = _get_default_model()
+    if not saved_model and experiments:
+        saved_model = experiments[0].get("weights_path", "")
+    return JSONResponse({
+        "model": saved_model,
+        "confidence": DEFAULT_CONFIDENCE,
+        "iou": DEFAULT_IOU,
+    })
 
 
 @app.post("/api/detect/frame")
@@ -463,19 +716,32 @@ async def detect_frame(
         weights_path = model if model else (_find_default_weights() or "")
         if weights_path:
             weights_path = _validate_weights_path(weights_path)
-        yolo = get_model(weights_path)
+        display_names = _load_class_display_names()
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir) / "frame.jpg"
-            tmp_path.write_bytes(contents)
-            results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
-            display_names = _load_class_display_names()
-
-            if results and len(results) > 0:
-                detections = _extract_detections(results[0], display_names)
-                h, w = results[0].orig_shape
+        if _is_onnx_model(weights_path):
+            nparr = np.frombuffer(contents, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is not None:
+                h, w = frame.shape[:2]
+                onnx = _get_onnx_backend()
+                results = onnx.predict_frame(frame, weights_path, confidence, iou)
+                class_names = _load_class_names()
+                detections = _onnx_detections_to_detection_outs(results, display_names, class_names)
+        else:
+            yolo = get_model(weights_path)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_path = Path(tmp_dir) / "frame.jpg"
+                tmp_path.write_bytes(contents)
+                results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
+                if results and len(results) > 0:
+                    detections = _extract_detections(results[0], display_names)
+                    h, w = results[0].orig_shape
     except Exception as exc:
         logger.warning("detect_frame failed: %s", exc)
+
+    # Record dashboard stats
+    for det in detections:
+        _dashboard_stats.record("webcam", det.class_name)
 
     latency = (time.time() - t0) * 1000
     return FrameDetectionResponse(
@@ -540,6 +806,9 @@ async def detect_upload(
                 for d in fp.detections
             ]
             frames_out.append(FrameOut(frame_index=fp.frame_index, detections=dets))
+            # Record dashboard stats
+            for d in fp.detections:
+                _dashboard_stats.record("upload", d.class_name)
 
     total_latency = round(time.time() - t0, 2)
     return VideoDetectionResponse(
@@ -550,6 +819,109 @@ async def detect_upload(
         video_width=video_width,
         video_height=video_height,
     )
+
+
+@app.post("/api/detect/image")
+async def detect_image(
+    image: UploadFile = File(...),
+    model: str = Form(default=""),
+    confidence: float = Form(default=DEFAULT_CONFIDENCE),
+    iou: float = Form(default=DEFAULT_IOU),
+):
+    if not model:
+        return JSONResponse({"error": "请选择一个模型"}, status_code=400)
+
+    t0 = time.time()
+    contents = await image.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return JSONResponse({"error": "无法解析图片"}, status_code=400)
+
+    weights_path = model
+    if weights_path:
+        weights_path = _validate_weights_path(weights_path)
+
+    display_names = _load_class_display_names()
+    detections = []
+
+    if _is_onnx_model(weights_path):
+        try:
+            onnx = _get_onnx_backend()
+            results = onnx.predict_frame(img, weights_path, confidence, iou)
+            class_names = _load_class_names()
+
+            # Draw ONNX results using PIL
+            pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(pil_img)
+            font = _get_font(18)
+            colors = [(56,189,248),(244,114,182),(52,211,153),(251,191,36),(167,139,250)]
+            for r in results:
+                cid = r["class_id"]
+                cn = class_names.get(cid, str(cid))
+                conf = r["confidence"]
+                x1, y1, x2, y2 = [int(v) for v in r["xyxy"]]
+                color = colors[cid % len(colors)]
+                dn = display_names.get(cn, cn)
+                label = f"{dn} {conf:.2f}"
+                draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+                bbox = draw.textbbox((0, 0), label, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                draw.rectangle([x1, y1 - th - 8, x1 + tw + 8, y1], fill=color)
+                draw.text((x1 + 4, y1 - th - 4), label, fill=(0,0,0), font=font)
+                detections.append({
+                    "class_name": cn,
+                    "display_name": dn,
+                    "confidence": round(conf, 4),
+                    "xyxy": r["xyxy"],
+                })
+            annotated = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            _, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            img_b64 = base64.b64encode(buf).decode('utf-8')
+        except Exception as exc:
+            logger.warning("detect_image ONNX failed: %s", exc)
+            _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            img_b64 = base64.b64encode(buf).decode('utf-8')
+    else:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            cv2.imwrite(tmp.name, img)
+            tmp_path = tmp.name
+
+        try:
+            yolo = get_model(weights_path)
+            results = yolo.predict(source=tmp_path, conf=confidence, iou=iou, verbose=False, save=False)
+            annotated = _draw_detections_pil(img, results, display_names)
+
+            _, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            img_b64 = base64.b64encode(buf).decode('utf-8')
+
+            if results and results[0].boxes is not None:
+                result = results[0]
+                boxes = result.boxes.xyxy.cpu().numpy()
+                confs = result.boxes.conf.cpu().numpy()
+                cls_ids = result.boxes.cls.cpu().numpy().astype(int)
+                names = result.names if result.names else {}
+                for j in range(len(boxes)):
+                    cn = names.get(int(cls_ids[j]), str(int(cls_ids[j])))
+                    detections.append({
+                        "class_name": cn,
+                        "display_name": display_names.get(cn, cn),
+                        "confidence": round(float(confs[j]), 4),
+                        "xyxy": boxes[j].tolist(),
+                    })
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    # Record dashboard stats
+    for det in detections:
+        _dashboard_stats.record("image", det["class_name"])
+
+    latency = round((time.time() - t0) * 1000, 1)
+    return JSONResponse({
+        "image": f"data:image/jpeg;base64,{img_b64}",
+        "detections": detections,
+        "latency_ms": latency,
+    })
 
 
 # ---- Batch Video Detection ----
@@ -833,7 +1205,10 @@ def _build_camera_list(include_credentials: bool = False) -> list[dict]:
             "rtsp_url": _build_rtsp_url(ip),
             "note": cam.get("note", ""),
             "custom": True,
-            "_status": "connected" if ip == streaming_ip else "unknown",
+            "_status": (
+                "connected" if ip == streaming_ip
+                else ("online" if _camera_ping_results.get(ip, {}).get("reachable") else "offline")
+            ),
         }
         if include_credentials:
             entry["username"] = creds["username"]
@@ -1006,17 +1381,22 @@ async def detect_rtsp(
         weights_path = model if model else (_find_default_weights() or "")
         if weights_path:
             weights_path = _validate_weights_path(weights_path)
-        yolo = get_model(weights_path)
+        display_names = _load_class_display_names()
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir) / "frame.jpg"
-            cv2.imwrite(str(tmp_path), frame)
-            results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
-            display_names = _load_class_display_names()
-
-            if results and len(results) > 0:
-                detections = _extract_detections(results[0], display_names)
-                h, w = results[0].orig_shape
+        if _is_onnx_model(weights_path):
+            onnx = _get_onnx_backend()
+            results = onnx.predict_frame(frame, weights_path, confidence, iou)
+            class_names = _load_class_names()
+            detections = _onnx_detections_to_detection_outs(results, display_names, class_names)
+        else:
+            yolo = get_model(weights_path)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_path = Path(tmp_dir) / "frame.jpg"
+                cv2.imwrite(str(tmp_path), frame)
+                results = yolo.predict(source=str(tmp_path), conf=confidence, iou=iou, verbose=False, stream=False, save=False)
+                if results and len(results) > 0:
+                    detections = _extract_detections(results[0], display_names)
+                    h, w = results[0].orig_shape
     except Exception as exc:
         logger.warning("detect_rtsp failed: %s", exc)
 
@@ -1043,11 +1423,6 @@ def _extract_ip_from_rtsp(url: str) -> str:
         return "unknown"
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    return templates.TemplateResponse(request=request, name="dashboard.html")
-
-
 @app.get("/api/dashboard/stats")
 async def dashboard_stats():
     raw = _dashboard_stats.get_all()
@@ -1063,7 +1438,7 @@ async def dashboard_stats():
             "name": cam.get("name") or cam.get("group_label", ""),
             "group": cam.get("group", "custom"),
             "group_label": cam.get("group_label", "自定义"),
-            "online": cam.get("_status", "unknown") == "connected",
+            "online": cam.get("_status", "unknown") in ("connected", "online"),
             "stats": data["stats"],
             "last_update": data["last_update"],
         })
@@ -1158,18 +1533,73 @@ async def set_rtsp_credentials(request: Request):
 
 # ---- CSV Import Cameras ----
 
+def _detect_csv_columns(header: list[str]) -> dict[str, int]:
+    """Auto-detect column indices from a CSV header row.
+
+    Returns a dict mapping field names to column indices.
+    Supported fields: ip, name, port, username, password.
+    Falls back to Hikvision default column positions when header
+    matching fails.
+    """
+    col_map: dict[str, int] = {}
+
+    # Normalize header for matching
+    normalized = [c.strip().lower() for c in header]
+
+    # IP address
+    for i, col in enumerate(normalized):
+        if col in ('ip地址', 'ip', 'ip地址', 'ip地址'):
+            col_map['ip'] = i
+            break
+    if 'ip' not in col_map and len(header) >= 1:
+        # Hikvision default: column 0 is IP
+        col_map['ip'] = 0
+
+    # Device name (serial number or alias)
+    for i, col in enumerate(normalized):
+        if col in ('设备序列号', '序列号', '设备名称', '设备别名', '别名', '名称'):
+            col_map['name'] = i
+            break
+    if 'name' not in col_map and len(header) >= 5:
+        # Hikvision default: column 4 is device serial number
+        col_map['name'] = 4
+
+    # Username
+    for i, col in enumerate(normalized):
+        if col in ('用户名', 'username', '登录用户名', '用户'):
+            col_map['username'] = i
+            break
+    if 'username' not in col_map and len(header) >= 6:
+        # Hikvision default: column 5 is username
+        col_map['username'] = 5
+
+    # Password
+    for i, col in enumerate(normalized):
+        if col in ('密码', 'password', '登录密码'):
+            col_map['password'] = i
+            break
+    if 'password' not in col_map and len(header) >= 7:
+        # Hikvision default: column 6 is password
+        col_map['password'] = 6
+
+    return col_map
+
+
 @app.post("/api/cameras/import")
 async def import_cameras_csv(file: UploadFile = File(...)):
     """上传 CSV 文件批量导入摄像头（支持海康威视导出格式）。
 
     CSV 格式（GB2312/GBK 编码）：
-    - 设备类型, 设备别名, IP地址, 端口号, 设备序列号
-    - 我们只提取 IP地址 列
+    - Column 0: IP address
+    - Column 3: Port (HTTP management port, 8000)
+    - Column 4: Device serial number (used as device name)
+    - Column 5: Username
+    - Column 6: Password
     """
     try:
         contents = await file.read()
 
-        # 尝试多种编码解码
+        # Try multiple encodings
         text = None
         for encoding in ['gb18030', 'gbk', 'gb2312', 'utf-8-sig', 'utf-8']:
             try:
@@ -1180,28 +1610,24 @@ async def import_cameras_csv(file: UploadFile = File(...)):
         if text is None:
             return JSONResponse({"error": "无法解码文件，请确保是 GB2312/GBK/UTF-8 编码的 CSV"}, status_code=400)
 
-        # 解析 CSV
+        # Parse CSV
         reader = csv.reader(io.StringIO(text))
         rows = list(reader)
         if len(rows) < 2:
             return JSONResponse({"error": "CSV 文件为空或只有表头"}, status_code=400)
 
-        # 查找 IP 地址列
+        # Auto-detect columns from header
         header = rows[0]
-        ip_col = None
-        for i, col in enumerate(header):
-            col_stripped = col.strip()
-            if col_stripped in ('IP地址', 'IP', 'ip', 'IP地址', 'ip地址'):
-                ip_col = i
-                break
-        if ip_col is None:
-            # 如果找不到列名，尝试第三列（海康格式的第三列是 IP）
-            if len(header) >= 3:
-                ip_col = 2
-            else:
-                return JSONResponse({"error": "CSV 中找不到 IP 地址列"}, status_code=400)
+        col_map = _detect_csv_columns(header)
 
-        # 提取 IP 地址
+        if 'ip' not in col_map:
+            return JSONResponse({"error": "CSV 中找不到 IP 地址列"}, status_code=400)
+
+        ip_col = col_map['ip']
+        name_col = col_map.get('name')
+        username_col = col_map.get('username')
+        password_col = col_map.get('password')
+
         existing_cameras = _load_custom_cameras()
         existing_ips = {c["ip"] for c in existing_cameras}
         imported = 0
@@ -1214,19 +1640,43 @@ async def import_cameras_csv(file: UploadFile = File(...)):
             ip = row[ip_col].strip()
             if not ip:
                 continue
-            # 验证 IP 格式（简单的 IP 正则）
+            # Validate IP format
             if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
                 errors.append(f"第 {row_idx} 行: 无效 IP '{ip}'")
                 continue
             if ip in existing_ips:
                 skipped += 1
                 continue
+
+            # Extract device name (serial number)
+            device_name = ""
+            if name_col is not None and len(row) > name_col:
+                device_name = row[name_col].strip()
+
+            # Extract username
+            username = ""
+            if username_col is not None and len(row) > username_col:
+                username = row[username_col].strip()
+
+            # Extract password
+            password = ""
+            if password_col is not None and len(row) > password_col:
+                password = row[password_col].strip()
+
+            # Build note with RTSP info (always use port 554, not CSV's HTTP port)
+            note_parts = ["RTSP:554"]
+            if username:
+                note_parts.append(f"用户:{username}")
+            if password:
+                note_parts.append(f"密码:{password}")
+            note = " ".join(note_parts)
+
             existing_cameras.append({
                 "ip": ip,
-                "name": "",
+                "name": device_name,
                 "group": "custom",
                 "group_label": "自定义",
-                "note": f"CSV 导入 (行 {row_idx})",
+                "note": note,
             })
             existing_ips.add(ip)
             imported += 1
@@ -1242,3 +1692,16 @@ async def import_cameras_csv(file: UploadFile = File(...)):
     except Exception as e:
         logger.warning("CSV import failed: %s", e)
         return JSONResponse({"error": f"导入失败: {str(e)}"}, status_code=500)
+
+
+# ---- SPA Fallback (must be registered LAST) ----
+
+@app.get("/{path:path}")
+async def serve_spa(path: str):
+    """Serve built React frontend — static files take priority, everything else falls back to index.html."""
+    if not _FRONTEND_DIST.exists():
+        raise HTTPException(404, "Frontend not built")
+    file_path = _FRONTEND_DIST / path
+    if file_path.is_file():
+        return FileResponse(file_path)
+    return FileResponse(_FRONTEND_DIST / "index.html")

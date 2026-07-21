@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from insightclass.backends.base import DetectorBackend
-from insightclass.evaluation.experiments import save_experiment_record
+from insightclass.utils.experiments import save_experiment_record
 from insightclass.exceptions import DependencyMissingError
 from insightclass.optional import has_package, require_package
 from insightclass.schemas import DetectionRecord, ExperimentRecord, FramePrediction, InferenceConfig, TrainingConfig

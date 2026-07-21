@@ -4,20 +4,18 @@ import argparse
 import sys
 from pathlib import Path
 
-# Fix Windows asyncio ProactorEventLoop crash when client disconnects
-if sys.platform == "win32":
-    import asyncio
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from insightclass.web._server_utils import fix_windows_event_loop
+fix_windows_event_loop()
 
 from insightclass.backends.factory import build_backend
 from insightclass.data.manifest import create_manifest, load_manifest, save_manifest
 from insightclass.data.video_ops import extract_frames_from_manifest
 from insightclass.data.yolo import inspect_yolo_dataset, save_inspection_report, write_yolo_dataset_yaml
-from insightclass.evaluation.experiments import export_experiment_summary
+from insightclass.utils.experiments import export_experiment_summary
 from insightclass.schemas import InferenceConfig, TrainingConfig
 from insightclass.utils.paths import ensure_dir
 from insightclass.utils.serialization import load_yaml
-from insightclass.visualization.pipeline import VisualizationPipeline
+from insightclass.utils.pipeline import VisualizationPipeline
 
 
 def _load_training_config(path: str) -> TrainingConfig:
@@ -75,15 +73,6 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser = subparsers.add_parser("compare-experiments", help="Export experiment summary CSV")
     compare_parser.add_argument("--experiments-root", required=True)
     compare_parser.add_argument("--output", required=True)
-
-    view_parser = subparsers.add_parser("view-experiments", help="View training experiment results")
-    view_parser.add_argument("--experiments-root", default="experiments", help="Experiments directory")
-    view_parser.add_argument("--port", type=int, default=8001, help="Server port (default: 8001)")
-
-    demo_parser = subparsers.add_parser("demo", help="Launch interactive demo (inference + training results)")
-    demo_parser.add_argument("--experiments-root", default="experiments", help="Experiments directory (default: experiments)")
-    demo_parser.add_argument("--class-config", default="configs/classes.yaml", help="Class config path (default: configs/classes.yaml)")
-    demo_parser.add_argument("--port", type=int, default=8000, help="Server port (default: 8000)")
 
     return parser
 
@@ -228,24 +217,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compare-experiments":
         csv_path = export_experiment_summary(args.experiments_root, args.output)
         print(f"Saved summary to {csv_path.resolve()}")
-        return 0
-
-    if args.command == "view-experiments":
-        from insightclass.web.experiment_viewer import create_app
-        import uvicorn
-        app = create_app(Path(args.experiments_root))
-        print(f"Starting experiment viewer on http://127.0.0.1:{args.port}")
-        print(f"Experiments root: {Path(args.experiments_root).resolve()}")
-        uvicorn.run(app, host="127.0.0.1", port=args.port)
-        return 0
-
-    if args.command == "demo":
-        from insightclass.web.demo import create_app
-        import uvicorn
-        app = create_app(Path(args.experiments_root), Path(args.class_config))
-        print(f"Starting InsightClass Demo on http://127.0.0.1:{args.port}")
-        print(f"Experiments root: {Path(args.experiments_root).resolve()}")
-        uvicorn.run(app, host="127.0.0.1", port=args.port)
         return 0
 
     if args.command == "serve":

@@ -56,11 +56,15 @@ data/labeling/batch_01_annot/*.json
 experiments/
 *.pt
 *.pth
-# 预训练权重（需要随代码一起分发）
-!yolo11n.pt
-!yolo26n.pt
 *.onnx
 *.engine
+
+# Pretrained weights (tracked in models/)
+!models/*.pt
+!models/onnx/*.onnx
+
+# Launcher log
+launcher.log
 
 # Output
 demo/output/
@@ -82,6 +86,10 @@ configs/dataset_manifest_v2.yaml
 .DS_Store
 Thumbs.db
 
+# Frontend
+node_modules/
+frontend/dist/
+
 # User camera config
 configs/cameras.yaml
 configs/app.yaml
@@ -99,3 +107,5 @@ data/labeling/
 build/
 dist/
 packaging/
+# Generated release archives
+InsightClass-Web.zip
