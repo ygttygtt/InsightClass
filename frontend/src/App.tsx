@@ -308,7 +308,7 @@ function App() {
 
     try {
       const fd = new FormData()
-      fd.append('file', entry.file)
+      fd.append(entry.type === 'image' ? 'image' : 'video', entry.file)
       fd.append('confidence', String(confidence))
       fd.append('iou', String(iou))
       if (model) fd.append('model', model)
