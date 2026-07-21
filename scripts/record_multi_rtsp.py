@@ -91,13 +91,13 @@ def recorder_thread(ip: str, output_dir: str, use_sub: bool = False, preview_mai
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     if not cap.isOpened():
-        print(f"[{ip}] ❌ 连接失败，跳过")
+        print(f"[{ip}] [FAIL] 连接失败，跳过")
         return
 
     src_fps = cap.get(cv2.CAP_PROP_FPS)
     src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"[{ip}] ✅ 连接成功  {src_w}x{src_h} @ {src_fps:.1f}FPS")
+    print(f"[{ip}] [OK] 连接成功  {src_w}x{src_h} @ {src_fps:.1f}FPS")
 
     # 预览用主码流(高清)，录制用子码流(兼容)
     preview_cap = None
@@ -110,7 +110,7 @@ def recorder_thread(ip: str, output_dir: str, use_sub: bool = False, preview_mai
             ph = int(preview_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             print(f"[{ip}] 📺 预览已连接主码流 {pw}x{ph}")
         else:
-            print(f"[{ip}] ⚠️ 主码流预览连接失败，使用子码流预览")
+            print(f"[{ip}] [WARN] 主码流预览连接失败，使用子码流预览")
             preview_cap = None
 
     os.makedirs(output_dir, exist_ok=True)
@@ -126,15 +126,15 @@ def recorder_thread(ip: str, output_dir: str, use_sub: bool = False, preview_mai
     fourcc = cv2.VideoWriter_fourcc(*FOURCC)
     writer = cv2.VideoWriter(out_path, fourcc, RECORD_FPS, (out_w, out_h))
     if not writer.isOpened():
-        print(f"[{ip}] ⚠️ {FOURCC} 编码不可用，改用 mp4v ...")
+        print(f"[{ip}] [WARN] {FOURCC} 编码不可用，改用 mp4v ...")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(out_path, fourcc, RECORD_FPS, (out_w, out_h))
     if not writer.isOpened():
-        print(f"[{ip}] ❌ 输出文件创建失败，跳过")
+        print(f"[{ip}] [FAIL] 输出文件创建失败，跳过")
         cap.release()
         return
 
-    print(f"[{ip}] 📹 开始录制 → {out_path}")
+    print(f"[{ip}] [REC] 开始录制 -> {out_path}")
 
     frame_interval = max(1, int(src_fps / RECORD_FPS)) if src_fps > 0 else 1
     frame_count = 0
@@ -144,15 +144,15 @@ def recorder_thread(ip: str, output_dir: str, use_sub: bool = False, preview_mai
     while not stop_event.is_set():
         ret, frame = cap.read()
         if not ret:
-            print(f"[{ip}] ⚠️ 视频流中断，尝试重连...")
+            print(f"[{ip}] [WARN] 视频流中断，尝试重连...")
             cap.release()
             time.sleep(2)
             cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             if not cap.isOpened():
-                print(f"[{ip}] ❌ 重连失败，终止录制")
+                print(f"[{ip}] [FAIL] 重连失败，终止录制")
                 break
-            print(f"[{ip}] ✅ 重连成功")
+            print(f"[{ip}] [OK] 重连成功")
             continue
 
         frame_count += 1
@@ -185,7 +185,7 @@ def recorder_thread(ip: str, output_dir: str, use_sub: bool = False, preview_mai
     with preview_lock:
         preview_frames.pop(ip, None)
     file_size_mb = os.path.getsize(out_path) / (1024 * 1024)
-    print(f"[{ip}] ⏹️  录制结束: {saved_count} 帧 | {elapsed:.0f}s | {file_size_mb:.1f}MB → {out_path}")
+    print(f"[{ip}] [STOP] 录制结束: {saved_count} 帧 | {elapsed:.0f}s | {file_size_mb:.1f}MB -> {out_path}")
 
 
 def main():
@@ -241,7 +241,7 @@ def main():
     # --preview 自动启用子码流 (主码流 H.265 在 OpenCV 中无法正常预览)
     use_sub = args.sub
     if args.preview and not use_sub:
-        print("⚠️  预览模式自动启用子码流(102)，主码流(H.265)在 OpenCV 中会黑屏")
+        print("[WARN] 预览模式自动启用子码流(102)，主码流(H.265)在 OpenCV 中会黑屏")
         use_sub = True
 
     print(f"========== 多路RTSP录制 ==========")

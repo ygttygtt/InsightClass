@@ -248,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
             host_display = "localhost" if args.host == "0.0.0.0" else args.host
             print(f"Starting InsightClass web server on https://{host_display}:{args.port}")
             print(f"Experiments root: {server_mod.EXPERIMENTS_ROOT.resolve()}")
-            print(f"NOTE: Browser will show a security warning for self-signed cert. Click 'Advanced' → 'Proceed'.")
+            print("NOTE: Browser will show a security warning for the self-signed certificate.")
             uvicorn.run(app, host=args.host, port=args.port,
                         ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
         else:
