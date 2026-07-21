@@ -32,7 +32,7 @@ export interface SystemStatus {
   service: 'ready'
   model: {
     status: 'idle' | 'loading' | 'ready' | 'error'
-    weights_path: string
+    model: string
     error: string
   }
 }

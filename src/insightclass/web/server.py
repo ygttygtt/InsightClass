@@ -87,7 +87,7 @@ VIDEO_SUFFIXES = frozenset({".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"})
 
 # RTSP 默认凭据（可通过 Web 界面全局设置）
 DEFAULT_RTSP_USERNAME = "admin"
-DEFAULT_RTSP_PASSWORD = "1000phone"
+DEFAULT_RTSP_PASSWORD = ""
 DEFAULT_RTSP_PORT = 554
 
 _rtsp_lock = threading.Lock()

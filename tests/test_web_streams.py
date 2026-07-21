@@ -55,6 +55,12 @@ class RtspStreamRegistryTests(unittest.TestCase):
 
 
 class CameraConfigurationTests(unittest.TestCase):
+    def test_rtsp_credentials_have_no_bundled_default_password(self):
+        with patch.object(server, "_load_app_config", return_value={}):
+            credentials = server._get_rtsp_credentials()
+
+        self.assertEqual(credentials["password"], "")
+
     def test_rtsp_credentials_response_masks_password(self):
         with patch.object(server, "_get_rtsp_credentials", return_value={
             "username": "admin", "password": "secret-value", "port": 554,
@@ -115,6 +121,16 @@ class CameraConfigurationTests(unittest.TestCase):
 
 
 class ModelLifecycleTests(unittest.TestCase):
+    def test_system_status_uses_frontend_model_contract(self):
+        with patch.object(server, "_get_model_state", return_value={
+            "status": "ready", "model": "model.onnx", "error": "",
+        }):
+            response = asyncio.run(server.system_status())
+
+        payload = bytes(response.body)
+        self.assertIn(b'"model":"model.onnx"', payload)
+        self.assertNotIn(b'"weights_path"', payload)
+
     def test_preload_worker_reports_ready(self):
         class Backend:
             def _load_model(self, _path):
