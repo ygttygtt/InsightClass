@@ -78,6 +78,15 @@ APP_CONFIG = _BASE_DIR / "configs" / "app.yaml"
 DEFAULT_CONFIDENCE = 0.5
 DEFAULT_IOU = 0.45
 DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+MAX_IMAGE_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_IMAGE_PIXELS = 50_000_000
+MAX_VIDEO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_BATCH_FILES = 20
+MAX_BATCH_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
+MAX_CSV_UPLOAD_BYTES = 5 * 1024 * 1024
+IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".webp"})
+VIDEO_SUFFIXES = frozenset({".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"})
 
 # RTSP 默认凭据（可通过 Web 界面全局设置）
 DEFAULT_RTSP_USERNAME = "admin"
@@ -290,6 +299,64 @@ class RtspStreamRegistry:
 _stream_registry = RtspStreamRegistry()
 
 _batch_jobs: dict[str, dict] = {}
+_batch_jobs_lock = threading.RLock()
+
+
+def _validate_upload_suffix(upload: UploadFile, allowed: frozenset[str], label: str) -> str:
+    suffix = Path(upload.filename or "").suffix.lower()
+    if suffix not in allowed:
+        extensions = ", ".join(sorted(allowed))
+        raise HTTPException(415, f"Unsupported {label} file type; allowed: {extensions}")
+    return suffix
+
+
+async def _read_upload_limited(upload: UploadFile, max_bytes: int, label: str) -> bytes:
+    if upload.size is not None and upload.size > max_bytes:
+        raise HTTPException(413, f"{label} exceeds the {max_bytes // (1024 * 1024)} MiB limit")
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await upload.read(UPLOAD_CHUNK_SIZE):
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(413, f"{label} exceeds the {max_bytes // (1024 * 1024)} MiB limit")
+        chunks.append(chunk)
+    if total == 0:
+        raise HTTPException(400, f"{label} is empty")
+    return b"".join(chunks)
+
+
+async def _write_upload_limited(
+    upload: UploadFile, destination: Path, max_bytes: int, label: str
+) -> int:
+    if upload.size is not None and upload.size > max_bytes:
+        raise HTTPException(413, f"{label} exceeds the {max_bytes // (1024 * 1024)} MiB limit")
+    total = 0
+    try:
+        with destination.open("wb") as handle:
+            while chunk := await upload.read(UPLOAD_CHUNK_SIZE):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        413, f"{label} exceeds the {max_bytes // (1024 * 1024)} MiB limit"
+                    )
+                handle.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    if total == 0:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(400, f"{label} is empty")
+    return total
+
+
+def _clear_batch_jobs() -> None:
+    with _batch_jobs_lock:
+        jobs = list(_batch_jobs.values())
+        _batch_jobs.clear()
+    for job in jobs:
+        tmp_dir = job.get("_dir")
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ---- Dashboard Stats (in-memory) ----
@@ -926,12 +993,15 @@ async def lifespan(app: FastAPI):
             name="insightclass-model-preload",
         ).start()
     ping_task = asyncio.create_task(_ping_cameras_periodically())
-    yield
-    ping_task.cancel()
-    _stream_registry.stop_all()
-    with _onnx_backends_lock:
-        _onnx_backends.clear()
-    clear_cache()
+    try:
+        yield
+    finally:
+        ping_task.cancel()
+        _stream_registry.stop_all()
+        _clear_batch_jobs()
+        with _onnx_backends_lock:
+            _onnx_backends.clear()
+        clear_cache()
 
 
 app = FastAPI(title="InsightClass Web", lifespan=lifespan)
@@ -1127,11 +1197,14 @@ async def detect_frame(
     iou: float = Form(default=DEFAULT_IOU, ge=0.0, le=1.0),
 ):
     t0 = time.time()
-    contents = await image.read()
+    _validate_upload_suffix(image, IMAGE_SUFFIXES, "image")
+    contents = await _read_upload_limited(image, MAX_IMAGE_UPLOAD_BYTES, "Image")
     frame = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if frame is None:
         raise HTTPException(400, "Unable to decode image")
     h, w = frame.shape[:2]
+    if h * w > MAX_IMAGE_PIXELS:
+        raise HTTPException(413, "Decoded image dimensions are too large")
     detections = await _infer_frame_for_request(
         frame, model, confidence, iou
     )
@@ -1154,15 +1227,11 @@ async def detect_upload(
 ):
     t0 = time.time()
 
-    weights_path = _resolve_weights_path(model)
-
-    suffix = Path(video.filename).suffix if video.filename else ".mp4"
+    suffix = _validate_upload_suffix(video, VIDEO_SUFFIXES, "video")
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / f"video{suffix}"
-        contents = await video.read()
-        if not contents:
-            raise HTTPException(400, "Uploaded video is empty")
-        tmp_path.write_bytes(contents)
+        await _write_upload_limited(video, tmp_path, MAX_VIDEO_UPLOAD_BYTES, "Video")
+        weights_path = _resolve_weights_path(model)
 
         cap = cv2.VideoCapture(str(tmp_path))
         if not cap.isOpened():
@@ -1225,10 +1294,13 @@ async def detect_image(
     iou: float = Form(default=DEFAULT_IOU, ge=0.0, le=1.0),
 ):
     t0 = time.time()
-    contents = await image.read()
+    _validate_upload_suffix(image, IMAGE_SUFFIXES, "image")
+    contents = await _read_upload_limited(image, MAX_IMAGE_UPLOAD_BYTES, "Image")
     img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         raise HTTPException(400, "Unable to decode image")
+    if img.shape[0] * img.shape[1] > MAX_IMAGE_PIXELS:
+        raise HTTPException(413, "Decoded image dimensions are too large")
 
     detections = await _infer_frame_for_request(img, model, confidence, iou)
     annotated = await asyncio.to_thread(_draw_detection_outs, img, detections)
@@ -1251,35 +1323,54 @@ async def detect_image(
 
 @app.post("/api/detect/batch-upload")
 async def batch_upload(videos: list[UploadFile] = File(...)):
+    if not videos:
+        raise HTTPException(400, "At least one video is required")
+    if len(videos) > MAX_BATCH_FILES:
+        raise HTTPException(413, f"A batch can contain at most {MAX_BATCH_FILES} videos")
     batch_id = uuid.uuid4().hex[:12]
     tmp_dir = tempfile.mkdtemp(prefix="ic_batch_")
     items: list[dict] = []
-    for idx, v in enumerate(videos):
-        suffix = Path(v.filename).suffix if v.filename else ".mp4"
-        display_name = Path(v.filename).name if v.filename else f"video{suffix}"
-        tmp_path = Path(tmp_dir) / f"video_{idx}{suffix}"
-        contents = await v.read()
-        tmp_path.write_bytes(contents)
-        items.append({
-            "filename": display_name,
-            "status": "pending",
-            "frames": [],
-            "frame_count": 0,
-            "fps": 0,
-            "video_width": 0,
-            "video_height": 0,
-            "latency_sec": 0,
-            "error": "",
-            "detection_summary": {},
-            "_path": str(tmp_path),
-        })
-    _batch_jobs[batch_id] = {
+    total_bytes = 0
+    try:
+        for idx, video in enumerate(videos):
+            suffix = _validate_upload_suffix(video, VIDEO_SUFFIXES, "video")
+            display_name = Path(video.filename).name if video.filename else f"video{suffix}"
+            tmp_path = Path(tmp_dir) / f"video_{idx}{suffix}"
+            remaining = MAX_BATCH_UPLOAD_BYTES - total_bytes
+            if remaining <= 0:
+                raise HTTPException(413, "Batch upload exceeds the total size limit")
+            written = await _write_upload_limited(
+                video,
+                tmp_path,
+                min(MAX_VIDEO_UPLOAD_BYTES, remaining),
+                f"Video {idx + 1}",
+            )
+            total_bytes += written
+            items.append({
+                "filename": display_name,
+                "status": "pending",
+                "frames": [],
+                "frame_count": 0,
+                "fps": 0,
+                "video_width": 0,
+                "video_height": 0,
+                "latency_sec": 0,
+                "error": "",
+                "detection_summary": {},
+                "_path": str(tmp_path),
+            })
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+    job = {
         "batch_id": batch_id,
         "status": "pending",
         "items": items,
         "total_latency_sec": 0,
         "_dir": tmp_dir,
     }
+    with _batch_jobs_lock:
+        _batch_jobs[batch_id] = job
     return JSONResponse({
         "batch_id": batch_id,
         "status": "pending",
@@ -1294,16 +1385,24 @@ async def batch_detect(
     confidence: float = Form(default=DEFAULT_CONFIDENCE, ge=0.0, le=1.0),
     iou: float = Form(default=DEFAULT_IOU, ge=0.0, le=1.0),
 ):
-    job = _batch_jobs.get(batch_id)
-    if not job:
-        return JSONResponse({"error": "Batch not found"}, status_code=404)
+    with _batch_jobs_lock:
+        job = _batch_jobs.get(batch_id)
+        if not job:
+            return JSONResponse({"error": "Batch not found"}, status_code=404)
+        if job["status"] != "pending":
+            return JSONResponse({"error": "Batch detection has already started"}, status_code=409)
 
     weights_path = _resolve_weights_path(model)
-
-    job["status"] = "processing"
-    job["_weights_path"] = weights_path
-    job["_confidence"] = confidence
-    job["_iou"] = iou
+    with _batch_jobs_lock:
+        job = _batch_jobs.get(batch_id)
+        if not job:
+            return JSONResponse({"error": "Batch not found"}, status_code=404)
+        if job["status"] != "pending":
+            return JSONResponse({"error": "Batch detection has already started"}, status_code=409)
+        job["status"] = "processing"
+        job["_weights_path"] = weights_path
+        job["_confidence"] = confidence
+        job["_iou"] = iou
 
     # Start background processing
     thread = threading.Thread(target=_batch_detect_worker, args=(job,), daemon=True)
@@ -1316,7 +1415,8 @@ def _schedule_batch_cleanup(batch_id: str, delay_sec: int = 3600):
     """Remove batch job and its temp dir after delay."""
     def _cleanup():
         time.sleep(delay_sec)
-        job = _batch_jobs.pop(batch_id, None)
+        with _batch_jobs_lock:
+            job = _batch_jobs.pop(batch_id, None)
         if job:
             tmp_dir = job.get("_dir")
             if tmp_dir:
@@ -1331,8 +1431,17 @@ def _batch_detect_worker(job: dict):
     iou = job["_iou"]
 
     t0 = time.time()
-    display_names = _load_class_display_names()
-    backend = _build_inference_backend(weights_path)
+    try:
+        display_names = _load_class_display_names()
+        backend = _build_inference_backend(weights_path)
+    except Exception as exc:
+        for item in job["items"]:
+            item["status"] = "error"
+            item["error"] = str(exc)
+        job["status"] = "error"
+        job["total_latency_sec"] = round(time.time() - t0, 2)
+        _schedule_batch_cleanup(job["batch_id"])
+        return
 
     for i, item in enumerate(job["items"]):
         item["status"] = "processing"
@@ -1340,6 +1449,9 @@ def _batch_detect_worker(job: dict):
         try:
             video_path = item["_path"]
             cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                cap.release()
+                raise ValueError("Unable to open uploaded video")
             item["fps"] = round(cap.get(cv2.CAP_PROP_FPS) or 30.0, 2)
             item["video_width"] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             item["video_height"] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -1384,7 +1496,7 @@ def _batch_detect_worker(job: dict):
             item["status"] = "error"
             item["error"] = str(e)
 
-    job["status"] = "done"
+    job["status"] = "error" if any(item["status"] == "error" for item in job["items"]) else "done"
     job["total_latency_sec"] = round(time.time() - t0, 2)
     _schedule_batch_cleanup(job["batch_id"])
 
@@ -1952,7 +2064,9 @@ async def import_cameras_csv(file: UploadFile = File(...)):
     password in the settings screen instead.
     """
     try:
-        contents = await file.read()
+        if Path(file.filename or "").suffix.lower() != ".csv":
+            raise HTTPException(415, "Only CSV files are supported")
+        contents = await _read_upload_limited(file, MAX_CSV_UPLOAD_BYTES, "CSV file")
 
         # Try multiple encodings
         text = None
@@ -2036,6 +2150,8 @@ async def import_cameras_csv(file: UploadFile = File(...)):
             "errors": errors,
             "total_in_csv": len(rows) - 1,
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("CSV import failed: %s", e)
         return JSONResponse({"error": f"导入失败: {str(e)}"}, status_code=500)
