@@ -37,7 +37,11 @@ def start_server_thread(
     return thread, server
 
 
-def wait_for_server(port: int, timeout: float = 30.0) -> bool:
+def wait_for_server(
+    port: int,
+    timeout: float = 30.0,
+    poll_interval: float = 0.1,
+) -> bool:
     """Poll until the server responds or timeout."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -47,5 +51,5 @@ def wait_for_server(port: int, timeout: float = 30.0) -> bool:
             )
             return True
         except Exception:
-            time.sleep(0.5)
+            time.sleep(poll_interval)
     return False

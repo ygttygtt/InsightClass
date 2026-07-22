@@ -26,10 +26,6 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from insightclass.web._server_utils import fix_windows_event_loop
-
-fix_windows_event_loop()
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -222,8 +218,6 @@ body{margin:0;display:flex;align-items:center;justify-content:center;height:100v
 
 
 def main() -> None:
-    import webview
-
     saved_port = _read_port(".port")
     saved_control = _read_port(".control")
     if saved_control and _send_activation(saved_control):
@@ -232,6 +226,10 @@ def main() -> None:
         # A legacy launcher may not expose activation yet; do not start a
         # second backend against its already-running service.
         return
+
+    # Importing the GUI runtime is unnecessary when a running instance can be
+    # activated. Keep it out of the second-launch path.
+    import webview
 
     port = _find_available_port(saved_port or 8000)
     _write_port(".port", port)
@@ -272,11 +270,15 @@ def main() -> None:
     activation = ActivationServer(show_window)
     activation.start()
     tray = TrayController(show_window, request_exit)
-    tray.start()
 
     def start_server():
-        from insightclass.web._server_utils import start_server_thread, wait_for_server
+        from insightclass.web._server_utils import (
+            fix_windows_event_loop,
+            start_server_thread,
+            wait_for_server,
+        )
 
+        fix_windows_event_loop()
         logger.info("Starting server on port %d", port)
         _thread, server = start_server_thread(host="127.0.0.1", port=port)
         state["server"] = server
@@ -287,9 +289,19 @@ def main() -> None:
             message = json.dumps("服务器启动超时，请检查日志或端口占用")
             window.evaluate_js(f"document.body.innerHTML='<h2 style=\\\"color:#ef4444\\\">'+{message}+'</h2>'")
 
-    threading.Thread(target=start_server, daemon=True, name="insightclass-server-start").start()
+    def start_after_window_shown():
+        # pywebview invokes this callback after its GUI loop is running. Heavy
+        # tray and server imports therefore cannot delay the first window.
+        tray.start()
+        threading.Thread(
+            target=start_server,
+            daemon=True,
+            name="insightclass-server-start",
+        ).start()
+
     try:
         webview.start(
+            func=start_after_window_shown,
             debug=False,
             icon=str(_resource_path("assets", "insightclass.ico")),
             private_mode=False,
