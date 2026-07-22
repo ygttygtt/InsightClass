@@ -1,6 +1,6 @@
 # 项目指南（开发者向）
 
-> 适用于 InsightClass `1.2.x`，最后更新：2026-07-21。
+> 适用于 InsightClass `1.2.x`，最后更新：2026-07-22。
 
 ## 1. 项目定位
 
@@ -164,6 +164,8 @@ build: 更新 Windows 便携版构建流程
 
 Python 包、前端包、Git 标签和 Release 使用同一版本号。发布前更新
 `CHANGELOG.md`，构建全新 ZIP，并验证附件校验值和 Release 指向的提交。
+Windows 发行物统一命名为 `InsightClass-Windows-x64-v<版本>.zip`；不要再使用
+`-Web` 区分桌面包，因为 WebView 和浏览器模式共享同一前后端，不是两套产品。
 
 ## 8. 相关文档
 

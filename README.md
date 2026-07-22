@@ -38,16 +38,23 @@ InsightClass 是面向课堂场景的开源视觉分析应用，提供 RTSP/电�
 ## 获取应用
 
 Windows 用户可从 [GitHub Releases](https://github.com/ygttygtt/InsightClass/releases/latest)
-下载 `InsightClass-Web.zip`：
+下载 `InsightClass-Windows-x64-v<版本>.zip`（当前为
+`InsightClass-Windows-x64-v1.2.1.zip`）：
 
 1. 将 ZIP 完整解压到可写目录。
 2. 双击 `InsightClass.exe`。
 3. 可右键 EXE 选择“发送到 -> 桌面快捷方式”，不要把 EXE 单独移出发行目录。
 4. 首次使用时，在设置中填写 RTSP 凭据；应用不内置任何摄像头密码。
 
+当前只维护这一种 Windows 桌面便携包。旧 Release 中的 `InsightClass.zip` 和
+`InsightClass-Web.zip` 是不同时期的旧命名，不是“普通版”和“Web 版”两套产品；
+桌面窗口始终复用同一套 React Web 页面和本地 FastAPI 后端。
+
 运行要求为 Windows 10/11 和 Microsoft Edge WebView2 Runtime。关闭主窗口只会
 隐藏到系统托盘；从托盘选择“退出”才会结束后端。发行版采用 onedir 目录模式，
 启动时无需先把依赖解压到临时目录；`_internal/` 是必需的运行资源。
+双击后先显示 WebView 窗口和监控台骨架，再异步启动托盘、本地服务和推理模块；
+API 就绪即进入主界面，模型继续在后台加载并显示真实状态。
 
 ## 从源码运行
 

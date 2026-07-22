@@ -3,6 +3,24 @@
 本项目的显著变更记录在此文件中。版本号遵循语义化版本，日期使用
 `YYYY-MM-DD`。
 
+## [1.2.1] - 2026-07-22
+
+### 改进
+
+- 调整 Windows 启动时序：WebView 窗口进入 GUI 循环后，再加载托盘、FastAPI、
+  OpenCV 和 ONNX 运行时，避免重型导入阻塞首个窗口。
+- 单实例唤醒在导入 WebView 前完成，已运行应用的再次双击响应更快。
+- 将服务就绪轮询间隔从 500 毫秒缩短到 100 毫秒。
+- 启动页改为与正式监控台一致的响应式骨架，显示窗口、服务、界面和完成四个真实
+  阶段；API 就绪后立即进入界面，模型继续后台加载。
+- Windows 发行包统一为唯一的 `InsightClass-Windows-x64-v1.2.1.zip`，ZIP 内目录
+  为 `InsightClass/`；不再用 `-Web` 暗示存在两个产品版本。
+
+### 文档
+
+- 补充旧版 `InsightClass.zip`、`InsightClass-Web.zip` 与当前发行包的关系，并同步
+  快速上手、前端手册、架构和完整发布流程。
+
 ## [1.2.0] - 2026-07-21
 
 ### 新增
@@ -61,6 +79,7 @@
 - 提供早期 Windows 便携版和端口自动选择。
 - 合并基础 FastAPI 服务与 Web 前端。
 
+[1.2.1]: https://github.com/ygttygtt/InsightClass/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ygttygtt/InsightClass/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ygttygtt/InsightClass/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/ygttygtt/InsightClass/releases/tag/v1.0.1
