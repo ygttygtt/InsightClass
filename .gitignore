@@ -110,3 +110,5 @@ dist/
 packaging/
 # Generated release archives
 InsightClass-Web.zip
+InsightClass-Windows-x64-v*.zip
+SHA256SUMS.txt

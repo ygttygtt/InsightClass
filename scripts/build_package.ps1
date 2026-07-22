@@ -10,8 +10,15 @@ Set-StrictMode -Version Latest
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $frontendDir = Join-Path $projectRoot "frontend"
 $pyInstallerDir = Join-Path $projectRoot "dist\InsightClass"
-$packageDir = Join-Path $projectRoot "dist\InsightClass-Web"
-$zipPath = Join-Path $projectRoot "InsightClass-Web.zip"
+$versionMatch = Select-String -Path (Join-Path $projectRoot "pyproject.toml") `
+    -Pattern '^version\s*=\s*"([^"]+)"$' | Select-Object -First 1
+if (-not $versionMatch) {
+    throw "Unable to read project version from pyproject.toml"
+}
+$version = $versionMatch.Matches[0].Groups[1].Value
+$packageDir = $pyInstallerDir
+$archiveName = "InsightClass-Windows-x64-v$version.zip"
+$zipPath = Join-Path $projectRoot $archiveName
 
 function Invoke-Native {
     param(
@@ -73,6 +80,9 @@ try {
     }
 
     Write-Host "[3/5] Building windowed application..." -ForegroundColor Yellow
+    if (Test-Path -LiteralPath $pyInstallerDir) {
+        Remove-Item -LiteralPath $pyInstallerDir -Recurse -Force
+    }
     Invoke-Native -Command $Python -Arguments @(
         "-m", "PyInstaller", "--clean", "--noconfirm", "InsightClass.spec"
     )
@@ -82,12 +92,6 @@ try {
     }
 
     Write-Host "[4/5] Assembling portable application..." -ForegroundColor Yellow
-    if (Test-Path -LiteralPath $packageDir) {
-        Remove-Item -LiteralPath $packageDir -Recurse -Force
-    }
-    New-Item -ItemType Directory -Path $packageDir | Out-Null
-    Copy-Item -Path (Join-Path $pyInstallerDir "*") -Destination $packageDir -Recurse -Force
-
     $runtimeConfigDir = Join-Path $packageDir "configs"
     New-Item -ItemType Directory -Path $runtimeConfigDir -Force | Out-Null
     Write-Utf8NoBom (Join-Path $runtimeConfigDir "app.yaml") "{}$([Environment]::NewLine)"
@@ -106,7 +110,7 @@ try {
     Write-Host "Build complete." -ForegroundColor Green
     Write-Host "Application: $packageDir"
     Write-Host "Executable:  $(Join-Path $packageDir 'InsightClass.exe')"
-    Write-Host "Archive:     $zipPath ($zipSizeMiB MiB)"
+    Write-Host "Archive:     $archiveName ($zipSizeMiB MiB)"
 } finally {
     Pop-Location
 }
