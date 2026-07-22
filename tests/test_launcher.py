@@ -18,6 +18,28 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(resource_path("assets", "insightclass-tray.png").is_file())
         self.assertIn('class="logo"', namespace["_LOADING_HTML"])
 
+    def test_loading_page_uses_real_startup_stages(self):
+        namespace = runpy.run_path(str(LAUNCHER))
+        loading_html = namespace["_LOADING_HTML"]
+        self.assertIn('class="startup-shell"', loading_html)
+        self.assertIn("window.__setStartupStage", loading_html)
+        self.assertIn("window.__showStartupError", loading_html)
+        self.assertNotIn("setInterval", loading_html)
+
+    def test_startup_messages_are_json_encoded(self):
+        namespace = runpy.run_path(str(LAUNCHER))
+
+        class FakeWindow:
+            script = ""
+
+            def evaluate_js(self, script):
+                self.script = script
+
+        window = FakeWindow()
+        namespace["_set_startup_stage"](window, "service", "加载 '服务'")
+        self.assertIn('"service"', window.script)
+        self.assertIn("加载 '服务'", window.script)
+
     def test_activation_server_wakes_existing_instance(self):
         namespace = runpy.run_path(str(LAUNCHER))
         ActivationServer = namespace["ActivationServer"]

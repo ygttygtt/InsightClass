@@ -204,17 +204,43 @@ class TrayController:
 
 
 _LOADING_HTML = """<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><style>
-:root{color-scheme:dark;--bg:#0a0e1a;--text:#e2e8f0;--muted:#94a3b8;--track:#334155}
-@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f5f7fb;--text:#172033;--muted:#64748b;--track:#dbe3ef}}
-body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:var(--bg);color:var(--text);font:14px 'Segoe UI',system-ui,sans-serif}
-.loader{text-align:center}.logo{width:66px;height:66px;margin-bottom:22px}.spinner{width:34px;height:34px;margin:0 auto 18px;border:3px solid var(--track);border-top-color:#6366f1;border-radius:50%;animation:spin .9s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}h2{margin:0 0 8px;font-size:20px;font-weight:650;letter-spacing:-.02em}p{color:var(--muted);margin:0}
-</style></head><body><div class="loader">
-<svg class="logo" viewBox="0 0 256 256" aria-label="InsightClass"><defs><linearGradient id="g" x1="12" y1="12" x2="244" y2="244" gradientUnits="userSpaceOnUse"><stop stop-color="#4f46e5"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs><rect x="12" y="12" width="232" height="232" rx="54" fill="url(#g)"/><path fill="#fff" fill-rule="evenodd" d="M57 128C92 74 164 74 199 128C164 182 92 182 57 128ZM77 128C103 98 153 98 179 128C153 158 103 158 77 128Z"/><circle cx="128" cy="128" r="25" fill="#fff"/><circle cx="128" cy="128" r="12" fill="#1e2959"/><circle cx="124" cy="124" r="3.5" fill="#fff"/></svg>
-<div class="spinner"></div><h2>InsightClass</h2><p id="status">正在启动服务...</p></div>
-<script>const messages=['正在启动服务...','正在加载推理引擎...','正在初始化模型...'];let index=0;setInterval(()=>{index=(index+1)%messages.length;document.getElementById('status').textContent=messages[index]},1800)</script>
-</body></html>"""
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="color-scheme" content="dark light"><style>
+:root{color-scheme:dark;--bg:#0b0f17;--panel:#111722;--panel-2:#171e2b;--line:#273142;--text:#edf2f7;--muted:#8d99aa;--accent:#22c1a3;--accent-soft:#173d39;--skeleton:#202a39;--danger:#ff6b6b}
+@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f3f6f8;--panel:#fff;--panel-2:#f8fafb;--line:#dce3e8;--text:#17212b;--muted:#687684;--accent:#087f6d;--accent-soft:#dff4ef;--skeleton:#e5eaee;--danger:#c83d4b}}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{background:var(--bg);color:var(--text);font:14px 'Segoe UI',system-ui,sans-serif;letter-spacing:0}
+.startup-shell{display:grid;grid-template-columns:208px minmax(0,1fr);height:100vh}.sidebar{border-right:1px solid var(--line);background:var(--panel);padding:18px 14px}.brand{display:flex;align-items:center;gap:10px;padding:0 7px 20px;font-size:16px;font-weight:650}.logo{width:30px;height:30px;flex:none}.nav{display:grid;gap:7px}.nav-row{height:38px;border-radius:6px;background:var(--panel-2);display:flex;align-items:center;gap:10px;padding:0 11px;color:var(--muted)}.nav-row.active{background:var(--accent-soft);color:var(--accent)}.nav-icon{width:15px;height:15px;border:2px solid currentColor;border-radius:3px}.nav-line{height:7px;width:82px;border-radius:3px;background:currentColor;opacity:.42}
+.page{display:grid;grid-template-rows:58px minmax(0,1fr);min-width:0}.toolbar{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:var(--panel);padding:0 20px}.toolbar-title{font-size:15px;font-weight:600}.toolbar-actions{display:flex;gap:9px}.tool{width:32px;height:32px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}
+.content{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;padding:16px;min-height:0}.monitor{position:relative;display:flex;align-items:center;justify-content:center;min-height:0;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.screen-skeleton{position:absolute;inset:14px;overflow:hidden;border-radius:5px;background:var(--panel-2)}.screen-skeleton:after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--skeleton) 65%,transparent),transparent);animation:shimmer 1.6s ease-in-out infinite}.screen-bar{position:absolute;left:18px;right:18px;bottom:18px;height:9px;border-radius:4px;background:var(--skeleton)}
+.startup-state{position:relative;z-index:1;width:min(390px,calc(100% - 40px));padding:22px;border:1px solid var(--line);border-radius:8px;background:color-mix(in srgb,var(--panel) 94%,transparent);box-shadow:0 12px 36px rgba(0,0,0,.18)}.state-head{display:flex;gap:13px;align-items:center}.spinner{width:30px;height:30px;flex:none;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}.startup-state.error .spinner{animation:none;border-color:var(--danger);position:relative}.startup-state.error .spinner:after{content:'!';position:absolute;inset:0;display:grid;place-items:center;color:var(--danger);font-weight:700}.startup-state h1{margin:0 0 4px;font-size:17px;font-weight:650}.startup-state p{margin:0;color:var(--muted);line-height:1.45}.progress{height:4px;margin:18px 0 14px;overflow:hidden;border-radius:2px;background:var(--line)}.progress-fill{width:12%;height:100%;background:var(--accent);transition:width .3s ease}.steps{display:flex;justify-content:space-between;color:var(--muted);font-size:12px}.step.active{color:var(--accent)}
+.camera-panel{display:grid;grid-template-rows:auto 150px 1fr;gap:12px;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.panel-title{font-weight:600}.camera-preview{border-radius:6px;background:var(--panel-2);position:relative;overflow:hidden}.camera-preview:before,.camera-preview:after{content:'';position:absolute;background:var(--skeleton);border-radius:4px}.camera-preview:before{width:56px;height:56px;left:calc(50% - 28px);top:35px}.camera-preview:after{width:110px;height:8px;left:calc(50% - 55px);bottom:24px}.metric-list{display:grid;align-content:start;gap:10px}.metric{height:54px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}.metric-line{height:7px;border-radius:3px;background:var(--skeleton)}.metric-line.short{width:45%;margin-top:10px}
+@keyframes spin{to{transform:rotate(360deg)}}@keyframes shimmer{to{transform:translateX(100%)}}@media(max-width:850px){.startup-shell{grid-template-columns:72px minmax(0,1fr)}.brand span,.nav-line{display:none}.brand{justify-content:center}.nav-row{justify-content:center}.content{grid-template-columns:minmax(0,1fr)}.camera-panel{display:none}}@media(prefers-reduced-motion:reduce){.spinner,.screen-skeleton:after{animation:none}}
+</style></head><body><div class="startup-shell">
+<aside class="sidebar"><div class="brand"><svg class="logo" viewBox="0 0 256 256" aria-label="InsightClass"><defs><linearGradient id="g" x1="12" y1="12" x2="244" y2="244" gradientUnits="userSpaceOnUse"><stop stop-color="#4f46e5"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs><rect x="12" y="12" width="232" height="232" rx="54" fill="url(#g)"/><path fill="#fff" fill-rule="evenodd" d="M57 128C92 74 164 74 199 128C164 182 92 182 57 128ZM77 128C103 98 153 98 179 128C153 158 103 158 77 128Z"/><circle cx="128" cy="128" r="25" fill="#fff"/><circle cx="128" cy="128" r="12" fill="#1e2959"/><circle cx="124" cy="124" r="3.5" fill="#fff"/></svg><span>InsightClass</span></div><div class="nav"><div class="nav-row active"><i class="nav-icon"></i><i class="nav-line"></i></div><div class="nav-row"><i class="nav-icon"></i><i class="nav-line"></i></div><div class="nav-row"><i class="nav-icon"></i><i class="nav-line"></i></div></div></aside>
+<section class="page"><header class="toolbar"><div class="toolbar-title">课堂行为监控</div><div class="toolbar-actions"><i class="tool"></i><i class="tool"></i></div></header><main class="content"><section class="monitor"><div class="screen-skeleton"><i class="screen-bar"></i></div><div class="startup-state" id="startup-state"><div class="state-head"><div class="spinner"></div><div><h1>正在打开 InsightClass</h1><p id="status" aria-live="polite">正在准备应用窗口...</p></div></div><div class="progress"><div class="progress-fill" id="progress-fill"></div></div><div class="steps"><span class="step active" data-stage="window">窗口</span><span class="step" data-stage="service">服务</span><span class="step" data-stage="api">界面</span><span class="step" data-stage="ready">完成</span></div></div></section><aside class="camera-panel"><div class="panel-title">摄像头</div><div class="camera-preview"></div><div class="metric-list"><div class="metric"><div class="metric-line"></div><div class="metric-line short"></div></div><div class="metric"><div class="metric-line"></div><div class="metric-line short"></div></div></div></aside></main></section>
+</div><script>
+const startupOrder=['window','service','api','ready'];
+window.__setStartupStage=function(stage,message){const index=startupOrder.indexOf(stage);document.getElementById('status').textContent=message;document.getElementById('progress-fill').style.width=((index+1)/startupOrder.length*100)+'%';document.querySelectorAll('.step').forEach((item,itemIndex)=>item.classList.toggle('active',itemIndex<=index));};
+window.__showStartupError=function(message){document.getElementById('startup-state').classList.add('error');document.getElementById('status').textContent=message;document.querySelector('.startup-state h1').textContent='InsightClass 启动失败';};
+</script></body></html>"""
+
+
+def _set_startup_stage(window, stage: str, message: str) -> None:
+    try:
+        window.evaluate_js(
+            "window.__setStartupStage("
+            f"{json.dumps(stage)}, {json.dumps(message, ensure_ascii=False)})"
+        )
+    except Exception:
+        logger.debug("Unable to update startup stage", exc_info=True)
+
+
+def _show_startup_error(window, message: str) -> None:
+    try:
+        window.evaluate_js(
+            f"window.__showStartupError({json.dumps(message, ensure_ascii=False)})"
+        )
+    except Exception:
+        logger.debug("Unable to show startup error", exc_info=True)
 
 
 def main() -> None:
@@ -278,16 +304,22 @@ def main() -> None:
             wait_for_server,
         )
 
+        _set_startup_stage(window, "service", "正在启动本地服务...")
         fix_windows_event_loop()
         logger.info("Starting server on port %d", port)
         _thread, server = start_server_thread(host="127.0.0.1", port=port)
         state["server"] = server
+        _set_startup_stage(window, "api", "正在准备分析界面...")
         if wait_for_server(port, timeout=60):
+            _set_startup_stage(
+                window,
+                "ready",
+                "界面已就绪，分析模型将在后台继续加载",
+            )
             window.load_url(f"http://127.0.0.1:{port}")
         else:
             logger.error("Server did not become ready within 60 seconds")
-            message = json.dumps("服务器启动超时，请检查日志或端口占用")
-            window.evaluate_js(f"document.body.innerHTML='<h2 style=\\\"color:#ef4444\\\">'+{message}+'</h2>'")
+            _show_startup_error(window, "服务器启动超时，请检查日志或端口占用")
 
     def start_after_window_shown():
         # pywebview invokes this callback after its GUI loop is running. Heavy
